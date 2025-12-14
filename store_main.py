@@ -343,7 +343,7 @@ def ManageProducts(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         key1 = types.KeyboardButton(text=get_text("add_product", lang))
@@ -371,7 +371,7 @@ def AddProductsMNG(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         msg = bot.send_message(id, get_text("reply_product_name", lang))
         new_product_number = random.randint(10000000,99999999)
         productnumber = f"{new_product_number}"
@@ -388,7 +388,7 @@ def add_a_product_name(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             productname = message.text
             msg = bot.send_message(id, get_text("reply_product_desc", lang))
@@ -407,7 +407,7 @@ def add_a_product_decription(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             description = message.text
             msg = bot.send_message(id, get_text("reply_product_price", lang))
@@ -426,7 +426,7 @@ def add_a_product_price(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             price = message.text
             msg = bot.send_message(id, get_text("attach_product_photo", lang))
@@ -445,7 +445,7 @@ def add_a_product_photo_link(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             image_link = message.photo[0].file_id
             all_categories = GetDataFromDB.GetCategoryIDsInDB()
@@ -474,7 +474,7 @@ def add_a_product_category(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         input_cat = message.text
         all_categories = GetDataFromDB.GetCategoryIDsInDB()
         input_cate = input_cat[1:99]
@@ -519,7 +519,7 @@ def add_a_product_keys_file(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             if message.text and message.text.upper() == "SKIP":
                 msg = bot.send_message(id, get_text("reply_download_link", lang))
@@ -604,7 +604,7 @@ def DeleteProductsMNG(message):
         lang = get_user_lang(id)
         admins = GetDataFromDB.GetAdminIDsInDB()
         productnumber_name = GetDataFromDB.GetProductNumberName()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             if productnumber_name == []:
                 msg = bot.send_message(id, get_text("no_product", lang))
                 bot.register_next_step_handler(msg, send_welcome)
@@ -636,7 +636,7 @@ def delete_a_product(message):
             print(e)
         
         admins = GetDataFromDB.GetAdminIDsInDB()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             key1 = types.KeyboardButton(text=get_text("add_product", lang))
@@ -915,7 +915,7 @@ def AddNewCategoryMNG(message):
         id = message.from_user.id
         lang = get_user_lang(id)
         admins = GetDataFromDB.GetAdminIDsInDB()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             msg = bot.send_message(id, get_text("reply_new_category", lang))
             bot.register_next_step_handler(msg, manage_categories)
         else:
@@ -935,7 +935,7 @@ def ListCategoryMNG(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         try:
@@ -975,7 +975,7 @@ def DeleteCategoryMNG(message):
         id = message.from_user.id
         lang = get_user_lang(id)
         admins = GetDataFromDB.GetAdminIDsInDB()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             key1 = types.KeyboardButton(text=get_text("home", lang))
@@ -1010,7 +1010,7 @@ def EditCategoryNameMNG(message):
         id = message.from_user.id
         lang = get_user_lang(id)
         admins = GetDataFromDB.GetAdminIDsInDB()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             key1 = types.KeyboardButton(text=get_text("add_category", lang))
@@ -1038,7 +1038,7 @@ def edit_a_category_name(message):
         id = message.from_user.id
         lang = get_user_lang(id)
         admins = GetDataFromDB.GetAdminIDsInDB()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             key1 = types.KeyboardButton(text=get_text("home", lang))
@@ -1074,7 +1074,7 @@ def ManageCategoryMNG(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         try:
@@ -1109,7 +1109,7 @@ def manage_categories(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         input_cat = message.text
@@ -1168,7 +1168,7 @@ def manage_categoriesbutton(message, input_c):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         all_categories = GetDataFromDB.GetCategoryIDsInDB()
@@ -1213,7 +1213,7 @@ def LISTProductsMNG(message):
     keyboarda.row_width = 2
     admins = GetDataFromDB.GetAdminIDsInDB()
     productinfos = GetDataFromDB.GetProductInfos()
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         if productinfos == []:
             bot.send_message(id, get_text("no_product", lang))
         else:
@@ -1247,7 +1247,7 @@ def MessageAllUsers(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         msg = bot.send_message(id, get_text("broadcast_message", lang))
         bot.register_next_step_handler(msg, message_all_users)
     else:
@@ -1257,7 +1257,7 @@ def message_all_users(message):
     admins = GetDataFromDB.GetAdminIDsInDB()
     
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         try:
@@ -1302,7 +1302,7 @@ def ManageOrders(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         key1 = types.KeyboardButton(text=get_text("list_orders", lang))
@@ -1323,7 +1323,7 @@ def ListOrders(message):
         
         admins = GetDataFromDB.GetAdminIDsInDB()
         all_orders = GetDataFromDB.GetOrderInfo()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             if all_orders ==  []:
@@ -1357,7 +1357,7 @@ def DeleteOrderMNG(message):
         
         admins = GetDataFromDB.GetAdminIDsInDB()
         all_orders = GetDataFromDB.GetOrderInfo()
-        if f"{id}" in f"{admins}":
+        if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             if all_orders ==  []:
@@ -1396,7 +1396,7 @@ def delete_an_order(message):
             
             
             admins = GetDataFromDB.GetAdminIDsInDB()
-            if f"{id}" in f"{admins}":
+            if is_admin(id):
                 keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
                 keyboardadmin.row_width = 2
                 key1 = types.KeyboardButton(text="List Orders 🛍")
@@ -1427,7 +1427,7 @@ def PaymentMethodMNG(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
         keyboardadmin.row_width = 2
         key1 = types.KeyboardButton(text=get_text("add_bitcoin", lang))
@@ -1451,7 +1451,7 @@ def AddBitcoinAPIKey(message):
     global edit_method
     edit_method = edit_methods
     all_pay_methods = GetDataFromDB.GetPaymentMethodsAll(edit_method)
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
 
         if f"{edit_method}" in f"{all_pay_methods}":
             bot.send_message(id, f"{edit_method} Payment method is already added ✅", reply_markup=keyboardadmin)
@@ -1474,7 +1474,7 @@ def add_bitcoin_api_key(message):
     admins = GetDataFromDB.GetAdminIDsInDB()
     keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
     keyboardadmin.row_width = 2
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             key1 = types.KeyboardButton(text="Home 🏘")
             keyboardadmin.add(key1)
@@ -1498,7 +1498,7 @@ def AddBitcoinSecretKey(message):
     keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
     keyboardadmin.row_width = 2
     all_pay_methods = GetDataFromDB.GetPaymentMethodsAll(edit_method)
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             for method_name, token_clientid_keys, sectret_keys in all_pay_methods:
                 all = method_name, token_clientid_keys, sectret_keys
@@ -1515,7 +1515,7 @@ def add_bitcoin_secret_key(message):
     admins = GetDataFromDB.GetAdminIDsInDB()
     keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
     keyboardadmin.row_width = 2
-    if f"{id}" in f"{admins}":
+    if is_admin(id):
         try:
             key1 = types.KeyboardButton(text="Home 🏘")
             keyboardadmin.add(key1)
