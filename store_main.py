@@ -70,13 +70,27 @@ except Exception as e:
     logger.error(f"Failed to set webhook: {e}")
     exit(1)
 
+# Helper function to check if user is admin
+def is_admin(user_id):
+    """Check if user_id is an admin"""
+    # Check env admin first
+    if default_admin_id and str(user_id) == str(default_admin_id):
+        return True
+    # Check database
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
+    admin_ids = [str(admin[0]) for admin in admins]
+    return str(user_id) in admin_ids
+
 # Add default admin from env if set
 if default_admin_id:
     try:
         existing_admins = GetDataFromDB.GetAdminIDsInDB() or []
-        if f"{default_admin_id}" not in f"{existing_admins}":
+        admin_ids = [str(admin[0]) for admin in existing_admins]
+        if str(default_admin_id) not in admin_ids:
             CreateDatas.AddAdmin(int(default_admin_id), "env_admin")
             logger.info(f"Default admin {default_admin_id} added from environment variable")
+        else:
+            logger.info(f"Admin {default_admin_id} already exists")
     except Exception as e:
         logger.error(f"Error adding default admin: {e}")
 
@@ -238,30 +252,29 @@ def send_welcome(message):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             keyboardadmin.row_width = 2
             
-            if admins == []:
+            # Check if user is admin (from env or database)
+            user_is_admin = is_admin(id)
+            
+            # If no admins exist and no env admin, make first user admin
+            if admins == [] and not default_admin_id:
                 users = GetDataFromDB.GetUserIDsInDB()
                 if f"{id}" not in f"{users}":
-                    CreateDatas.AddAuser(id,usname)
-                CreateDatas.AddAdmin(id,usname)
-                key0 = types.KeyboardButton(text=get_text("manage_products", lang))
-                key1 = types.KeyboardButton(text=get_text("manage_categories", lang))
-                key2 = types.KeyboardButton(text=get_text("manage_orders", lang))
-                key3 = types.KeyboardButton(text=get_text("payment_methods", lang))
-                key4 = types.KeyboardButton(text=get_text("news_to_users", lang))
-                key5 = types.KeyboardButton(text=get_text("switch_to_user", lang))
-                keyboardadmin.add(key0)
-                keyboardadmin.add(key1, key2)
-                keyboardadmin.add(key3, key4)
-                keyboardadmin.add(key5)
-                store_statistics = f"{get_text('store_statistics', lang)}\n\n\n{get_text('total_users', lang)}: {all_user_s}\n\n{get_text('total_admins', lang)}: {all_admin_s}\n\n{get_text('total_products', lang)}: {all_product_s}\n\n{get_text('total_orders', lang)}: {all_orders_s}\n\n\n➖➖➖➖➖➖➖➖➖➖➖➖➖"
-                user_data = "0"
-                bot.send_photo(chat_id=message.chat.id, photo="https://i.ibb.co/9vctwpJ/IMG-1235.jpg", caption=f"{get_text('welcome_admin', lang)}\n\n{get_text('wallet_balance', lang)} {user_data} 💰 \n\n{store_statistics}", reply_markup=keyboardadmin)
-            elif f"{id}" in f"{admins}":
-                keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
-                keyboardadmin.row_width = 2
-                users = GetDataFromDB.GetUserIDsInDB()
-                if f"{id}" not in f"{users}":
-                    CreateDatas.AddAuser(id,usname)
+                    CreateDatas.AddAuser(id, usname)
+                CreateDatas.AddAdmin(id, usname)
+                user_is_admin = True
+            
+            if user_is_admin:
+                # Add user to database if not exists
+                users = GetDataFromDB.GetUserIDsInDB() or []
+                user_ids = [str(u[0]) for u in users] if users else []
+                if str(id) not in user_ids:
+                    CreateDatas.AddAuser(id, usname)
+                
+                # Add to admin table if not exists (for env admin)
+                admin_ids = [str(a[0]) for a in admins] if admins else []
+                if str(id) not in admin_ids:
+                    CreateDatas.AddAdmin(id, usname)
+                
                 key0 = types.KeyboardButton(text=get_text("manage_products", lang))
                 key1 = types.KeyboardButton(text=get_text("manage_categories", lang))
                 key2 = types.KeyboardButton(text=get_text("manage_orders", lang))
