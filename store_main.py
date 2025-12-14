@@ -55,34 +55,46 @@ if not webhook_url or not bot_token:
 
 bot = telebot.TeleBot(bot_token, threaded=False)
 
-# Set up webhook
+# Set up webhook (Render-safe: use /webhook path)
 try:
     bot.remove_webhook()
-    bot.set_webhook(url=webhook_url)
-    logger.info(f"Webhook set successfully to {webhook_url}")
+
+    base_url = (webhook_url or "").rstrip("/")
+    public_webhook = f"{base_url}/webhook"
+
+    bot.set_webhook(url=public_webhook)
+    logger.info(f"Webhook set successfully to {public_webhook}")
 except Exception as e:
     logger.error(f"Failed to set webhook: {e}")
     exit(1)
 
-
 # Process webhook calls
 logger.info("Shop Started!")
 
-@flask_app.route('/', methods=['GET', 'POST'])
-def webhook():
+@flask_app.route("/", methods=["GET", "HEAD"])
+def health():
+    # Render health check hits this route (HEAD /)
+    return "ok", 200
+
+
+@flask_app.route("/webhook", methods=["POST"])
+def telegram_webhook():
     """Handle incoming webhook requests from Telegram"""
     try:
-        if flask.request.headers.get('content-type') == 'application/json':
-            json_string = flask.request.get_data().decode('utf-8')
+        ctype = (request.headers.get("content-type") or "").lower()
+
+        if ctype.startswith("application/json"):
+            json_string = request.get_data(as_text=True)
             update = telebot.types.Update.de_json(json_string)
             bot.process_new_updates([update])
-            return ''
-        else:
-            logger.warning("Invalid content type in webhook request")
-            flask.abort(403)
+            return "ok", 200
+
+        logger.warning(f"Invalid content type in webhook request: {ctype}")
+        return "forbidden", 403
+
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
-        flask.abort(500)
+        return "error", 500
 
 # Initialize payment settings
 def get_payment_api_key():
@@ -1446,10 +1458,11 @@ def add_bitcoin_secret_key(message):
     else:
         bot.send_message(id, "⚠️ Only Admin can use this command !!!", reply_markup=keyboard)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         logger.info("Starting Flask application...")
-        flask_app.run(debug=False, host='0.0.0.0', port=5000)
+        port = int(os.getenv("PORT", "10000"))  # Render provides PORT
+        flask_app.run(debug=False, host="0.0.0.0", port=port)
     except Exception as e:
         logger.error(f"Error starting Flask application: {e}")
         exit(1)
