@@ -14,6 +14,10 @@ db_connection.row_factory = sqlite3.Row  # Enable dict-like access to rows
 cursor = db_connection.cursor()
 db_lock = threading.Lock()
 
+# Backward compatibility aliases for old code
+DBConnection = db_connection
+connected = cursor
+
 class CreateTables:
     """Database table creation and management"""
     
