@@ -2,17 +2,40 @@ import sqlite3
 from datetime import datetime
 import threading
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database configuration
-DB_FILE = 'InDMDevDBShop.db'
-db_connection = sqlite3.connect(DB_FILE, check_same_thread=False)
-db_connection.row_factory = sqlite3.Row  # Enable dict-like access to rows
-cursor = db_connection.cursor()
+# Check if PostgreSQL URL is provided (for production on Render/Supabase)
+DATABASE_URL = os.getenv('DATABASE_URL', '')
+
 db_lock = threading.Lock()
+
+if DATABASE_URL and DATABASE_URL.startswith('postgres'):
+    # Use PostgreSQL
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    
+    USE_POSTGRES = True
+    logger.info("Using PostgreSQL database")
+    
+    def get_connection():
+        return psycopg2.connect(DATABASE_URL)
+    
+    db_connection = get_connection()
+    cursor = db_connection.cursor()
+else:
+    # Use SQLite (local development)
+    USE_POSTGRES = False
+    DB_FILE = os.getenv('DATABASE_PATH', 'InDMDevDBShop.db')
+    logger.info(f"Using SQLite database: {DB_FILE}")
+    
+    db_connection = sqlite3.connect(DB_FILE, check_same_thread=False)
+    db_connection.row_factory = sqlite3.Row
+    cursor = db_connection.cursor()
 
 # Backward compatibility aliases for old code
 DBConnection = db_connection
@@ -24,93 +47,186 @@ class CreateTables:
     @staticmethod
     def create_all_tables():
         """Create all necessary database tables"""
+        global db_connection, cursor
+        
+        # Reconnect for PostgreSQL
+        if USE_POSTGRES:
+            db_connection = get_connection()
+            cursor = db_connection.cursor()
+        
+        # Use SERIAL for PostgreSQL, INTEGER PRIMARY KEY AUTOINCREMENT for SQLite
+        auto_increment = "SERIAL" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        
         try:
             with db_lock:
                 # Create ShopUserTable
-                cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER UNIQUE NOT NULL,
-                    username TEXT,
-                    wallet INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT UNIQUE NOT NULL,
+                        username TEXT,
+                        wallet INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER UNIQUE NOT NULL,
+                        username TEXT,
+                        wallet INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
                 
                 # Create ShopAdminTable
-                cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    admin_id INTEGER UNIQUE NOT NULL,
-                    username TEXT,
-                    wallet INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
+                        id SERIAL PRIMARY KEY,
+                        admin_id BIGINT UNIQUE NOT NULL,
+                        username TEXT,
+                        wallet INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        admin_id INTEGER UNIQUE NOT NULL,
+                        username TEXT,
+                        wallet INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
 
                 # Create ShopProductTable
-                cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    productnumber INTEGER UNIQUE NOT NULL,
-                    admin_id INTEGER NOT NULL,
-                    username TEXT,
-                    productname TEXT NOT NULL,
-                    productdescription TEXT,
-                    productprice INTEGER DEFAULT 0,
-                    productimagelink TEXT,
-                    productdownloadlink TEXT,
-                    productkeysfile TEXT,
-                    productquantity INTEGER DEFAULT 0,
-                    productcategory TEXT DEFAULT 'Default Category',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (admin_id) REFERENCES ShopAdminTable(admin_id)
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
+                        id SERIAL PRIMARY KEY,
+                        productnumber BIGINT UNIQUE NOT NULL,
+                        admin_id BIGINT NOT NULL,
+                        username TEXT,
+                        productname TEXT NOT NULL,
+                        productdescription TEXT,
+                        productprice INTEGER DEFAULT 0,
+                        productimagelink TEXT,
+                        productdownloadlink TEXT,
+                        productkeysfile TEXT,
+                        productquantity INTEGER DEFAULT 0,
+                        productcategory TEXT DEFAULT 'Default Category',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        productnumber INTEGER UNIQUE NOT NULL,
+                        admin_id INTEGER NOT NULL,
+                        username TEXT,
+                        productname TEXT NOT NULL,
+                        productdescription TEXT,
+                        productprice INTEGER DEFAULT 0,
+                        productimagelink TEXT,
+                        productdownloadlink TEXT,
+                        productkeysfile TEXT,
+                        productquantity INTEGER DEFAULT 0,
+                        productcategory TEXT DEFAULT 'Default Category',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (admin_id) REFERENCES ShopAdminTable(admin_id)
+                    )""")
 
                 # Create ShopOrderTable
-                cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    buyerid INTEGER NOT NULL,
-                    buyerusername TEXT,
-                    productname TEXT NOT NULL,
-                    productprice TEXT NOT NULL,
-                    orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    paidmethod TEXT DEFAULT 'NO',
-                    productdownloadlink TEXT,
-                    productkeys TEXT,
-                    buyercomment TEXT,
-                    ordernumber INTEGER UNIQUE NOT NULL,
-                    productnumber INTEGER NOT NULL,
-                    payment_id TEXT,
-                    FOREIGN KEY (buyerid) REFERENCES ShopUserTable(user_id),
-                    FOREIGN KEY (productnumber) REFERENCES ShopProductTable(productnumber)
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
+                        id SERIAL PRIMARY KEY,
+                        buyerid BIGINT NOT NULL,
+                        buyerusername TEXT,
+                        productname TEXT NOT NULL,
+                        productprice TEXT NOT NULL,
+                        orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        paidmethod TEXT DEFAULT 'NO',
+                        productdownloadlink TEXT,
+                        productkeys TEXT,
+                        buyercomment TEXT,
+                        ordernumber BIGINT UNIQUE NOT NULL,
+                        productnumber BIGINT NOT NULL,
+                        payment_id TEXT
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        buyerid INTEGER NOT NULL,
+                        buyerusername TEXT,
+                        productname TEXT NOT NULL,
+                        productprice TEXT NOT NULL,
+                        orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        paidmethod TEXT DEFAULT 'NO',
+                        productdownloadlink TEXT,
+                        productkeys TEXT,
+                        buyercomment TEXT,
+                        ordernumber INTEGER UNIQUE NOT NULL,
+                        productnumber INTEGER NOT NULL,
+                        payment_id TEXT,
+                        FOREIGN KEY (buyerid) REFERENCES ShopUserTable(user_id),
+                        FOREIGN KEY (productnumber) REFERENCES ShopProductTable(productnumber)
+                    )""")
                 
                 # Create ShopCategoryTable
-                cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    categorynumber INTEGER UNIQUE NOT NULL,
-                    categoryname TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
+                        id SERIAL PRIMARY KEY,
+                        categorynumber BIGINT UNIQUE NOT NULL,
+                        categoryname TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        categorynumber INTEGER UNIQUE NOT NULL,
+                        categoryname TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
                 
                 # Create PaymentMethodTable
-                cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    admin_id INTEGER,
-                    username TEXT,
-                    method_name TEXT UNIQUE NOT NULL,
-                    token_keys_clientid TEXT,
-                    secret_keys TEXT,
-                    activated TEXT DEFAULT 'NO',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
+                        id SERIAL PRIMARY KEY,
+                        admin_id BIGINT,
+                        username TEXT,
+                        method_name TEXT UNIQUE NOT NULL,
+                        token_keys_clientid TEXT,
+                        secret_keys TEXT,
+                        activated TEXT DEFAULT 'NO',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        admin_id INTEGER,
+                        username TEXT,
+                        method_name TEXT UNIQUE NOT NULL,
+                        token_keys_clientid TEXT,
+                        secret_keys TEXT,
+                        activated TEXT DEFAULT 'NO',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
                 
                 # Create CanvaAccountTable for storing Canva accounts with authkey
-                cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email TEXT UNIQUE NOT NULL,
-                    authkey TEXT NOT NULL,
-                    buyer_id INTEGER DEFAULT NULL,
-                    order_number INTEGER DEFAULT NULL,
-                    status TEXT DEFAULT 'available',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )""")
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
+                        id SERIAL PRIMARY KEY,
+                        email TEXT UNIQUE NOT NULL,
+                        authkey TEXT NOT NULL,
+                        buyer_id BIGINT DEFAULT NULL,
+                        order_number BIGINT DEFAULT NULL,
+                        status TEXT DEFAULT 'available',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email TEXT UNIQUE NOT NULL,
+                        authkey TEXT NOT NULL,
+                        buyer_id INTEGER DEFAULT NULL,
+                        order_number INTEGER DEFAULT NULL,
+                        status TEXT DEFAULT 'available',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
                 
                 db_connection.commit()
                 logger.info("All database tables created successfully")
@@ -123,6 +239,34 @@ class CreateTables:
 # Initialize tables
 CreateTables.create_all_tables()
 
+# Helper function to get placeholder for SQL queries
+def get_placeholder():
+    return "%s" if USE_POSTGRES else "?"
+
+def execute_query(query, params=None):
+    """Execute query with proper placeholder conversion"""
+    global db_connection, cursor
+    if USE_POSTGRES:
+        # Reconnect if needed
+        try:
+            cursor.execute("SELECT 1")
+        except:
+            db_connection = get_connection()
+            cursor = db_connection.cursor()
+        # Convert ? to %s for PostgreSQL
+        query = query.replace("?", "%s")
+        # Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
+        query = query.replace("INSERT OR IGNORE", "INSERT")
+        if "INSERT" in query and "ON CONFLICT" not in query:
+            # Add ON CONFLICT DO NOTHING for INSERT statements
+            if "VALUES" in query:
+                query = query.rstrip(")") + ") ON CONFLICT DO NOTHING"
+    if params:
+        cursor.execute(query, params)
+    else:
+        cursor.execute(query)
+    return cursor
+
 class CreateDatas:
     """Database data creation and insertion operations"""
     
@@ -131,10 +275,16 @@ class CreateDatas:
         """Add a new user to the database"""
         try:
             with db_lock:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO ShopUserTable (user_id, username, wallet) VALUES (?, ?, ?)",
-                    (user_id, username, 0)
-                )
+                if USE_POSTGRES:
+                    cursor.execute(
+                        "INSERT INTO ShopUserTable (user_id, username, wallet) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO NOTHING",
+                        (user_id, username, 0)
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO ShopUserTable (user_id, username, wallet) VALUES (?, ?, ?)",
+                        (user_id, username, 0)
+                    )
                 db_connection.commit()
                 logger.info(f"User added: {username} (ID: {user_id})")
                 return True
@@ -148,10 +298,16 @@ class CreateDatas:
         """Add a new admin to the database"""
         try:
             with db_lock:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO ShopAdminTable (admin_id, username, wallet) VALUES (?, ?, ?)",
-                    (admin_id, username, 0)
-                )
+                if USE_POSTGRES:
+                    cursor.execute(
+                        "INSERT INTO ShopAdminTable (admin_id, username, wallet) VALUES (%s, %s, %s) ON CONFLICT (admin_id) DO NOTHING",
+                        (admin_id, username, 0)
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO ShopAdminTable (admin_id, username, wallet) VALUES (?, ?, ?)",
+                        (admin_id, username, 0)
+                    )
                 db_connection.commit()
                 logger.info(f"Admin added: {username} (ID: {admin_id})")
                 return True
