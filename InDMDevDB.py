@@ -15,15 +15,14 @@ DATABASE_URL = os.getenv('DATABASE_URL', '')
 db_lock = threading.Lock()
 
 if DATABASE_URL and DATABASE_URL.startswith('postgres'):
-    # Use PostgreSQL
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
+    # Use PostgreSQL with psycopg3
+    import psycopg
     
     USE_POSTGRES = True
     logger.info("Using PostgreSQL database")
     
     def get_connection():
-        return psycopg2.connect(DATABASE_URL)
+        return psycopg.connect(DATABASE_URL)
     
     db_connection = get_connection()
     cursor = db_connection.cursor()
