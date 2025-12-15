@@ -2632,6 +2632,7 @@ def ViewPendingOrders(message):
 
 # Keep-alive mechanism to prevent Render from sleeping
 import threading
+import time as time_module_keepalive
 
 def keep_alive():
     """Ping self every 10 minutes to prevent Render free tier from sleeping"""
@@ -2642,7 +2643,7 @@ def keep_alive():
     
     while True:
         try:
-            time.sleep(600)  # 10 minutes
+            time_module_keepalive.sleep(600)  # 10 minutes
             response = requests.get(f"{render_url}/health", timeout=30)
             logger.info(f"Keep-alive ping: {response.status_code}")
         except Exception as e:
