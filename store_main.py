@@ -154,14 +154,21 @@ def casso_webhook():
                 logger.warning("Invalid Casso secure token")
                 return "unauthorized", 401
         
-        data = request.get_json()
+        data = request.get_json(silent=True)
         logger.info(f"Casso webhook received: {data}")
         
+        # Handle empty or invalid data (test webhook from Casso)
         if not data:
+            logger.info("Empty webhook data - returning ok for test")
             return "ok", 200
         
         # Casso sends transaction data in 'data' array
         transactions = data.get("data", [])
+        
+        # If no transactions, just return ok (test webhook)
+        if not transactions:
+            logger.info("No transactions in webhook - returning ok")
+            return "ok", 200
         
         for txn in transactions:
             # Get transaction details
@@ -295,7 +302,8 @@ def casso_webhook():
         
     except Exception as e:
         logger.error(f"Error processing Casso webhook: {e}")
-        return "error", 500
+        # Always return 200 to Casso to prevent retry spam
+        return "ok", 200
 
 
 # Initialize payment settings
