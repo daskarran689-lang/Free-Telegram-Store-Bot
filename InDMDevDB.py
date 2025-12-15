@@ -40,6 +40,38 @@ else:
 DBConnection = db_connection
 connected = cursor
 
+# Helper class to auto-convert SQLite ? to PostgreSQL %s
+class DBCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+    
+    def execute(self, query, params=None):
+        global db_connection, cursor
+        if USE_POSTGRES:
+            # Reconnect if connection is closed
+            try:
+                self._cursor.execute("SELECT 1")
+            except:
+                db_connection = get_connection()
+                cursor = db_connection.cursor()
+                self._cursor = cursor
+            # Convert ? to %s for PostgreSQL
+            query = query.replace("?", "%s")
+        if params:
+            self._cursor.execute(query, params)
+        else:
+            self._cursor.execute(query)
+        return self._cursor
+    
+    def fetchone(self):
+        return self._cursor.fetchone()
+    
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+# Replace connected with wrapper
+connected = DBCursor(cursor)
+
 class CreateTables:
     """Database table creation and management"""
     
@@ -320,14 +352,24 @@ class CreateDatas:
         """Add a new product to the database"""
         try:
             with db_lock:
-                cursor.execute("""
-                    INSERT INTO ShopProductTable 
-                    (productnumber, admin_id, username, productname, productdescription, 
-                     productprice, productimagelink, productdownloadlink, productkeysfile, 
-                     productquantity, productcategory) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
-                      'https://nil.nil', 'NIL', 0, 'Default Category'))
+                if USE_POSTGRES:
+                    cursor.execute("""
+                        INSERT INTO ShopProductTable 
+                        (productnumber, admin_id, username, productname, productdescription, 
+                         productprice, productimagelink, productdownloadlink, productkeysfile, 
+                         productquantity, productcategory) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
+                          'https://nil.nil', 'NIL', 0, 'Default Category'))
+                else:
+                    cursor.execute("""
+                        INSERT INTO ShopProductTable 
+                        (productnumber, admin_id, username, productname, productdescription, 
+                         productprice, productimagelink, productdownloadlink, productkeysfile, 
+                         productquantity, productcategory) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
+                          'https://nil.nil', 'NIL', 0, 'Default Category'))
                 db_connection.commit()
                 logger.info(f"Product {productnumber} added by admin {username}")
                 return True
@@ -358,15 +400,26 @@ class CreateDatas:
         """Add a new order to the database"""
         try:
             with db_lock:
-                cursor.execute("""
-                    INSERT INTO ShopOrderTable 
-                    (buyerid, buyerusername, productname, productprice, orderdate, 
-                     paidmethod, productdownloadlink, productkeys, buyercomment, 
-                     ordernumber, productnumber, payment_id) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (buyer_id, username, productname, productprice, orderdate, 
-                      paidmethod, productdownloadlink, productkeys, 'NIL', 
-                      ordernumber, productnumber, payment_id))
+                if USE_POSTGRES:
+                    cursor.execute("""
+                        INSERT INTO ShopOrderTable 
+                        (buyerid, buyerusername, productname, productprice, orderdate, 
+                         paidmethod, productdownloadlink, productkeys, buyercomment, 
+                         ordernumber, productnumber, payment_id) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (buyer_id, username, productname, productprice, orderdate, 
+                          paidmethod, productdownloadlink, productkeys, 'NIL', 
+                          ordernumber, productnumber, payment_id))
+                else:
+                    cursor.execute("""
+                        INSERT INTO ShopOrderTable 
+                        (buyerid, buyerusername, productname, productprice, orderdate, 
+                         paidmethod, productdownloadlink, productkeys, buyercomment, 
+                         ordernumber, productnumber, payment_id) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (buyer_id, username, productname, productprice, orderdate, 
+                          paidmethod, productdownloadlink, productkeys, 'NIL', 
+                          ordernumber, productnumber, payment_id))
                 db_connection.commit()
                 logger.info(f"Order {ordernumber} added for user {username}")
                 return True
@@ -528,8 +581,8 @@ class GetDataFromDB:
         """Get user wallet balance from database"""
         try:
             with db_lock:
-                cursor.execute("SELECT wallet FROM ShopUserTable WHERE user_id = ?", (userid,))
-                result = cursor.fetchone()
+                connected.execute("SELECT wallet FROM ShopUserTable WHERE user_id = ?", (userid,))
+                result = connected.fetchone()
                 return result[0] if result else 0
         except Exception as e:
             logger.error(f"Error getting user wallet for {userid}: {e}")
@@ -1050,10 +1103,16 @@ class CanvaAccountDB:
         """Add a new Canva account to database"""
         try:
             with db_lock:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO CanvaAccountTable (email, authkey, status) VALUES (?, ?, 'available')",
-                    (email, authkey)
-                )
+                if USE_POSTGRES:
+                    connected.execute(
+                        "INSERT INTO CanvaAccountTable (email, authkey, status) VALUES (%s, %s, 'available') ON CONFLICT (email) DO NOTHING",
+                        (email, authkey)
+                    )
+                else:
+                    connected.execute(
+                        "INSERT OR IGNORE INTO CanvaAccountTable (email, authkey, status) VALUES (?, ?, 'available')",
+                        (email, authkey)
+                    )
                 db_connection.commit()
                 logger.info(f"Canva account added: {email}")
                 return True
@@ -1067,11 +1126,11 @@ class CanvaAccountDB:
         """Get available Canva accounts"""
         try:
             with db_lock:
-                cursor.execute(
+                connected.execute(
                     "SELECT id, email, authkey FROM CanvaAccountTable WHERE status = 'available' LIMIT ?",
                     (count,)
                 )
-                return cursor.fetchall()
+                return connected.fetchall()
         except Exception as e:
             logger.error(f"Error getting available accounts: {e}")
             return []
@@ -1081,7 +1140,7 @@ class CanvaAccountDB:
         """Assign account to a buyer after purchase"""
         try:
             with db_lock:
-                cursor.execute(
+                connected.execute(
                     "UPDATE CanvaAccountTable SET buyer_id = ?, order_number = ?, status = 'sold' WHERE id = ?",
                     (buyer_id, order_number, account_id)
                 )
@@ -1097,11 +1156,11 @@ class CanvaAccountDB:
         """Get authkey for an email (for OTP retrieval)"""
         try:
             with db_lock:
-                cursor.execute(
+                connected.execute(
                     "SELECT authkey FROM CanvaAccountTable WHERE email = ?",
                     (email,)
                 )
-                result = cursor.fetchone()
+                result = connected.fetchone()
                 return result[0] if result else None
         except Exception as e:
             logger.error(f"Error getting authkey for {email}: {e}")
@@ -1112,11 +1171,11 @@ class CanvaAccountDB:
         """Get all accounts owned by a buyer"""
         try:
             with db_lock:
-                cursor.execute(
+                connected.execute(
                     "SELECT email, order_number, created_at FROM CanvaAccountTable WHERE buyer_id = ?",
                     (buyer_id,)
                 )
-                return cursor.fetchall()
+                return connected.fetchall()
         except Exception as e:
             logger.error(f"Error getting buyer accounts: {e}")
             return []
@@ -1127,16 +1186,16 @@ class CanvaAccountDB:
         try:
             with db_lock:
                 # Verify the account belongs to this buyer
-                cursor.execute(
+                connected.execute(
                     "SELECT id FROM CanvaAccountTable WHERE email = ? AND buyer_id = ?",
                     (email, buyer_id)
                 )
-                result = cursor.fetchone()
+                result = connected.fetchone()
                 if not result:
                     return False
                 
                 # Clear buyer info (account becomes unusable, not available for resale)
-                cursor.execute(
+                connected.execute(
                     "UPDATE CanvaAccountTable SET buyer_id = NULL, status = 'deleted_by_user' WHERE email = ? AND buyer_id = ?",
                     (email, buyer_id)
                 )
@@ -1153,8 +1212,8 @@ class CanvaAccountDB:
         """Get count of available accounts"""
         try:
             with db_lock:
-                cursor.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'available'")
-                result = cursor.fetchone()
+                connected.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'available'")
+                result = connected.fetchone()
                 return result[0] if result else 0
         except Exception as e:
             logger.error(f"Error counting accounts: {e}")
@@ -1165,10 +1224,10 @@ class CanvaAccountDB:
         """Get all accounts (for admin)"""
         try:
             with db_lock:
-                cursor.execute(
+                connected.execute(
                     "SELECT id, email, authkey, buyer_id, order_number, status, created_at FROM CanvaAccountTable"
                 )
-                return cursor.fetchall()
+                return connected.fetchall()
         except Exception as e:
             logger.error(f"Error getting all accounts: {e}")
             return []
@@ -1178,7 +1237,7 @@ class CanvaAccountDB:
         """Delete an account"""
         try:
             with db_lock:
-                cursor.execute("DELETE FROM CanvaAccountTable WHERE id = ?", (account_id,))
+                connected.execute("DELETE FROM CanvaAccountTable WHERE id = ?", (account_id,))
                 db_connection.commit()
                 return True
         except Exception as e:
