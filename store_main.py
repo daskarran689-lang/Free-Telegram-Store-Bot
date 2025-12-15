@@ -1531,7 +1531,9 @@ def get_otp_for_email(user_id, email, lang):
             client = TempMailClient(auth_key=authkey)
             logger.info(f"Using authkey: {authkey[:10]}...")
         
+        # get_emails will auto-create custom alias for Premium accounts
         emails = client.get_emails(email)
+        logger.info(f"get_emails response: {len(emails) if emails else 0} emails")
         
         # Check for error response
         if isinstance(emails, list) and len(emails) > 0 and "error" in emails[0]:
@@ -2628,8 +2630,37 @@ def ViewPendingOrders(message):
 
 # Bitcoin payment methods removed - using bank transfer only
 
+# Keep-alive mechanism to prevent Render from sleeping
+import threading
+
+def keep_alive():
+    """Ping self every 10 minutes to prevent Render free tier from sleeping"""
+    render_url = os.getenv('RENDER_EXTERNAL_URL', '')
+    if not render_url:
+        logger.info("RENDER_EXTERNAL_URL not set, skip keep-alive")
+        return
+    
+    while True:
+        try:
+            time.sleep(600)  # 10 minutes
+            response = requests.get(f"{render_url}/health", timeout=30)
+            logger.info(f"Keep-alive ping: {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Keep-alive ping failed: {e}")
+
+@flask_app.route("/health")
+def health_check():
+    """Health check endpoint for keep-alive"""
+    return "OK", 200
+
 if __name__ == "__main__":
     try:
+        # Start keep-alive thread
+        if os.getenv('RENDER_EXTERNAL_URL'):
+            keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+            keep_alive_thread.start()
+            logger.info("Keep-alive thread started")
+        
         logger.info("Starting Flask application...")
         port = int(os.getenv("PORT", "10000"))  # Render provides PORT
         flask_app.run(debug=False, host="0.0.0.0", port=port)

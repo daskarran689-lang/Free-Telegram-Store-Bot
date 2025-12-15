@@ -45,14 +45,8 @@ class TempMailClient:
                 self.login(email, password)
     
     def _load_cached_jwt(self, email: str) -> Optional[str]:
-        """Load cached JWT token from file"""
-        try:
-            if os.path.exists(_jwt_cache_file):
-                with open(_jwt_cache_file, 'r') as f:
-                    cache = json.load(f)
-                    return cache.get(email)
-        except:
-            pass
+        """Load cached JWT token from file (skip cache, always login fresh)"""
+        # JWT expires quickly (15 min), so always login fresh for reliability
         return None
     
     def _save_jwt_cache(self, email: str, jwt: str):
@@ -129,7 +123,8 @@ class TempMailClient:
     
     def get_emails(self, email_address: str, retry: bool = True) -> List[Dict[str, Any]]:
         """
-        Retrieve messages for an inbox
+        Retrieve messages for an inbox.
+        For Premium accounts, automatically creates the custom alias first.
         
         Args:
             email_address: The inbox email address
@@ -138,6 +133,11 @@ class TempMailClient:
         Returns:
             list: List of email messages
         """
+        # For Premium with JWT, always create custom alias first (fast, idempotent)
+        if self.jwt_token and '@' in email_address:
+            alias, domain = email_address.split('@', 1)
+            self.create_custom_alias(alias, domain)  # Ignore result, may already exist
+        
         url = f"{self.BASE_URL}/emails/emails"
         params = {"emailAddress": email_address}
         headers = self._get_headers()
@@ -280,6 +280,50 @@ class TempMailClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             return [{"error": str(e)}]
+    
+    def is_email_owned(self, email_address: str) -> bool:
+        """
+        Check if an email address is owned by the authenticated user
+        
+        Args:
+            email_address: The email address to check
+            
+        Returns:
+            bool: True if owned, False otherwise
+        """
+        inboxes = self.list_my_inboxes()
+        if isinstance(inboxes, list):
+            for inbox in inboxes:
+                if isinstance(inbox, dict) and inbox.get('email') == email_address:
+                    return True
+        return False
+    
+    def ensure_email_exists(self, email_address: str) -> Dict[str, Any]:
+        """
+        Ensure an email exists in the Premium account (create if not exists)
+        
+        Args:
+            email_address: The email address to ensure exists
+            
+        Returns:
+            dict: Result with 'success' or 'error'
+        """
+        if not self.jwt_token:
+            return {"error": "Premium login required"}
+        
+        # Check if already owned
+        if self.is_email_owned(email_address):
+            return {"success": True, "message": "Email already exists"}
+        
+        # Try to create it
+        if '@' in email_address:
+            alias, domain = email_address.split('@', 1)
+            result = self.create_custom_alias(alias, domain)
+            if "error" not in result:
+                return {"success": True, "message": "Email created"}
+            return result
+        
+        return {"error": "Invalid email format"}
     
     @staticmethod
     def clean_html(text: str) -> str:
