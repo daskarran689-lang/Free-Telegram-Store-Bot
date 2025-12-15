@@ -19,7 +19,7 @@ class CategoriesDatas:
     def get_category_products(message, input_cate):
         id = message.from_user.id
         lang = get_user_lang(id)
-        keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
         keyboard.row_width = 2
         buyer_id = message.from_user.id
         buyer_username = message.from_user.username
@@ -43,7 +43,7 @@ class CategoriesDatas:
                 product_list = GetDataFromDB.GetProductInfoByCTGName(product_category)
                 print(product_list)
                 if product_list == []:
-                    keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+                    keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
                     keyboard.row_width = 2
                     key1 = types.KeyboardButton(text=get_text("shop_items", lang))
                     key2 = types.KeyboardButton(text=get_text("my_orders", lang))
@@ -53,11 +53,17 @@ class CategoriesDatas:
                     bot.send_message(id, get_text("no_product_store", lang), reply_markup=keyboard)
                 else:
                     bot.send_message(id, f"{product_cate} - {get_text('category_products', lang)}")
-                    keyboard = types.InlineKeyboardMarkup()
+                    # Create reply keyboard with buy buttons for each product
+                    buy_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                    product_buttons = []
                     for productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory in product_list:
-                        keyboard.add(types.InlineKeyboardButton(text=get_text("buy_now", lang), callback_data=f"getproduct_{productnumber}"))
-                        bot.send_photo(id, photo=f"{productimagelink}", caption=get_text("product_info", lang, productnumber, productname, productprice, StoreCurrency, productquantity, productdescription), reply_markup=keyboard)
-                        
-                        #bot.send_message(id, "💡 Click on a Product ID to select the product purchase")
+                        bot.send_photo(id, photo=f"{productimagelink}", caption=get_text("product_info", lang, productname, productprice, StoreCurrency, productquantity, productdescription))
+                        product_buttons.append(types.KeyboardButton(text=f"🛒 Mua {productname}"))
+                    
+                    # Add product buy buttons
+                    for btn in product_buttons:
+                        buy_keyboard.add(btn)
+                    buy_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+                    bot.send_message(id, "👆 Chọn sản phẩm muốn mua:", reply_markup=buy_keyboard)
             else:
                 print("Wrong commmand !!!")

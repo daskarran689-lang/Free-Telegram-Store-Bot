@@ -29,25 +29,51 @@ class UserOperations:
         lang = get_user_lang(id)
         usname = message.chat.username
         products_list = GetDataFromDB.GetProductInfo()
-        all_categories = GetDataFromDB.GetCategoryIDsInDB()
-        keyboard = types.InlineKeyboardMarkup()
-        if all_categories == [] or all_categories is None:
-            bot.send_message(id, get_text("no_product_store", lang))
-        else:
-            for catnum, catname in all_categories:
-                c_catname = catname.upper()
-                products_category = GetDataFromDB.GetCategoryNumProduct(c_catname)
-                for ctg in products_category:
-                    products_in_category = ctg[0]
-                    text_but = f"🏷 {catname} ({products_in_category})"
-                    text_cal = f"getcats_{catnum}"
-                    keyboard.add(types.InlineKeyboardButton(text=text_but, callback_data=text_cal))
         
-            bot.send_message(id, get_text("categories", lang).replace(" 👇", ":"), reply_markup=keyboard)
-            bot.send_message(id, get_text("list_completed", lang), reply_markup=types.ReplyKeyboardRemove())
-            if products_list:
-                for productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory in products_list:
-                    list_m = [productnumber, productname, productprice]
+        if products_list == [] or products_list is None:
+            keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+            bot.send_message(id, get_text("no_product_store", lang), reply_markup=keyboard)
+        else:
+            # Get actual Canva account count from database
+            from InDMDevDB import CanvaAccountDB
+            canva_stock = CanvaAccountDB.get_account_count()
+            
+            # Show inline buttons for quantity selection
+            inline_kb = types.InlineKeyboardMarkup(row_width=3)
+            inline_kb.row(
+                types.InlineKeyboardButton(text="🛒 Mua (1)", callback_data="buy_qty_1"),
+                types.InlineKeyboardButton(text="🛒 Mua (2)", callback_data="buy_qty_2"),
+                types.InlineKeyboardButton(text="🛒 Mua (3)", callback_data="buy_qty_3")
+            )
+            inline_kb.row(
+                types.InlineKeyboardButton(text="🛒 Mua (5)", callback_data="buy_qty_5"),
+                types.InlineKeyboardButton(text="🛒 Mua (10)", callback_data="buy_qty_10")
+            )
+            
+            # Reply keyboard for navigation
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛒 Mua (1)"),
+                types.KeyboardButton(text="🛒 Mua (2)"),
+                types.KeyboardButton(text="🛒 Mua (3)")
+            )
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛒 Mua (5)"),
+                types.KeyboardButton(text="🛒 Mua (10)")
+            )
+            nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+            
+            # Show product info with real stock from Canva accounts + inline buttons
+            for productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory in products_list:
+                StoreCurrency = os.getenv('STORE_CURRENCY', 'VND')
+                # Use canva_stock instead of productquantity
+                caption = get_text("product_info", lang, productname, productprice, StoreCurrency, canva_stock, productdescription)
+                caption += "\n\n👇 Chọn số lượng muốn mua:"
+                bot.send_photo(id, photo=f"{productimagelink}", caption=caption, reply_markup=inline_kb, parse_mode='HTML')
+            
+            # Set reply keyboard
+            bot.send_message(id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=nav_keyboard)
 
     #@bot.callback_query_handler(func=lambda call: True)
     def callback_query(call):
@@ -59,8 +85,7 @@ class UserOperations:
     def purchase_a_products(message, input_cate):
         id = message.from_user.id
         lang = get_user_lang(id)
-        keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
-        keyboard.row_width = 2
+        
         def checkint():
             try:
                 input_cat = int(input_cate)
@@ -71,16 +96,22 @@ class UserOperations:
         input_product_id = checkint() 
         if isinstance(input_product_id, int) == True:
             product_list = GetDataFromDB.GetProductInfoByPName(input_product_id)
-            if f"{input_product_id}" in f"{product_list}":
-                key1 = types.KeyboardButton(text=get_text("bitcoin", lang))
-                keyboard.add(key1)
+            print(f"DEBUG: product_list = {product_list}")
+            
+            # Check if product exists (product_list is not empty)
+            if product_list and len(product_list) > 0:
                 for productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory in product_list:
                     list_m = [productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory]
-                    bot.send_message(id, get_text("select_payment", lang), reply_markup=keyboard)
+                
                 global order_info
                 order_info = list_m
+                
+                # Return order info to trigger bank transfer directly
+                return list_m
             else:
-                print("Wrong command !!!")
+                print(f"Wrong command !!! Product ID {input_product_id} not found")
+                return None
+        return None
     def orderdata():
         try:
             1==1

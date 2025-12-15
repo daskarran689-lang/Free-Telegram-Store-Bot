@@ -101,6 +101,17 @@ class CreateTables:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )""")
                 
+                # Create CanvaAccountTable for storing Canva accounts with authkey
+                cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    authkey TEXT NOT NULL,
+                    buyer_id INTEGER DEFAULT NULL,
+                    order_number INTEGER DEFAULT NULL,
+                    status TEXT DEFAULT 'available',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""")
+                
                 db_connection.commit()
                 logger.info("All database tables created successfully")
                 
@@ -873,3 +884,243 @@ class CleanData:
 
 
 
+
+# ============== CANVA ACCOUNT MANAGEMENT ==============
+
+class CanvaAccountDB:
+    """Database operations for Canva accounts with TempMail authkey"""
+    
+    @staticmethod
+    def add_account(email, authkey):
+        """Add a new Canva account to database"""
+        try:
+            with db_lock:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO CanvaAccountTable (email, authkey, status) VALUES (?, ?, 'available')",
+                    (email, authkey)
+                )
+                db_connection.commit()
+                logger.info(f"Canva account added: {email}")
+                return True
+        except Exception as e:
+            logger.error(f"Error adding Canva account {email}: {e}")
+            db_connection.rollback()
+            return False
+    
+    @staticmethod
+    def get_available_accounts(count=1):
+        """Get available Canva accounts"""
+        try:
+            with db_lock:
+                cursor.execute(
+                    "SELECT id, email, authkey FROM CanvaAccountTable WHERE status = 'available' LIMIT ?",
+                    (count,)
+                )
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error getting available accounts: {e}")
+            return []
+    
+    @staticmethod
+    def assign_account_to_buyer(account_id, buyer_id, order_number):
+        """Assign account to a buyer after purchase"""
+        try:
+            with db_lock:
+                cursor.execute(
+                    "UPDATE CanvaAccountTable SET buyer_id = ?, order_number = ?, status = 'sold' WHERE id = ?",
+                    (buyer_id, order_number, account_id)
+                )
+                db_connection.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error assigning account: {e}")
+            db_connection.rollback()
+            return False
+    
+    @staticmethod
+    def get_authkey_by_email(email):
+        """Get authkey for an email (for OTP retrieval)"""
+        try:
+            with db_lock:
+                cursor.execute(
+                    "SELECT authkey FROM CanvaAccountTable WHERE email = ?",
+                    (email,)
+                )
+                result = cursor.fetchone()
+                return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Error getting authkey for {email}: {e}")
+            return None
+    
+    @staticmethod
+    def get_buyer_accounts(buyer_id):
+        """Get all accounts owned by a buyer"""
+        try:
+            with db_lock:
+                cursor.execute(
+                    "SELECT email, order_number, created_at FROM CanvaAccountTable WHERE buyer_id = ?",
+                    (buyer_id,)
+                )
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error getting buyer accounts: {e}")
+            return []
+    
+    @staticmethod
+    def remove_buyer_from_account(email, buyer_id):
+        """Remove buyer from account (user deletes from their list)"""
+        try:
+            with db_lock:
+                # Verify the account belongs to this buyer
+                cursor.execute(
+                    "SELECT id FROM CanvaAccountTable WHERE email = ? AND buyer_id = ?",
+                    (email, buyer_id)
+                )
+                result = cursor.fetchone()
+                if not result:
+                    return False
+                
+                # Clear buyer info (account becomes unusable, not available for resale)
+                cursor.execute(
+                    "UPDATE CanvaAccountTable SET buyer_id = NULL, status = 'deleted_by_user' WHERE email = ? AND buyer_id = ?",
+                    (email, buyer_id)
+                )
+                db_connection.commit()
+                logger.info(f"User {buyer_id} removed account {email} from their list")
+                return True
+        except Exception as e:
+            logger.error(f"Error removing buyer from account: {e}")
+            db_connection.rollback()
+            return False
+    
+    @staticmethod
+    def get_account_count():
+        """Get count of available accounts"""
+        try:
+            with db_lock:
+                cursor.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'available'")
+                result = cursor.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Error counting accounts: {e}")
+            return 0
+    
+    @staticmethod
+    def get_all_accounts():
+        """Get all accounts (for admin)"""
+        try:
+            with db_lock:
+                cursor.execute(
+                    "SELECT id, email, authkey, buyer_id, order_number, status, created_at FROM CanvaAccountTable"
+                )
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error getting all accounts: {e}")
+            return []
+    
+    @staticmethod
+    def delete_account(account_id):
+        """Delete an account"""
+        try:
+            with db_lock:
+                cursor.execute("DELETE FROM CanvaAccountTable WHERE id = ?", (account_id,))
+                db_connection.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting account: {e}")
+            db_connection.rollback()
+            return False
+    
+    @staticmethod
+    def import_emails_only(file_content):
+        """Import emails only (for Premium - no authkey needed)
+        
+        Format: one email per line
+        """
+        count = 0
+        try:
+            lines = file_content.strip().split('\n')
+            for line in lines:
+                email = line.strip()
+                if email and '@' in email:
+                    # Add with empty authkey (Premium doesn't need it)
+                    if CanvaAccountDB.add_account(email, "PREMIUM"):
+                        count += 1
+            return count
+        except Exception as e:
+            logger.error(f"Error importing emails: {e}")
+            return count
+    
+    @staticmethod
+    def import_accounts_from_file(file_content):
+        """Import accounts from file content (legacy - with authkey)
+        
+        Supported formats:
+        1. email|authkey (one per line)
+        2. Block format:
+           email1
+           email2
+           
+           authkey1
+           authkey2
+        """
+        count = 0
+        try:
+            content = file_content.strip()
+            
+            # Check if it's pipe-separated format
+            if '|' in content:
+                lines = content.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if '|' in line:
+                        parts = line.split('|')
+                        if len(parts) >= 2:
+                            email = parts[0].strip()
+                            authkey = parts[1].strip()
+                            if email and authkey:
+                                if CanvaAccountDB.add_account(email, authkey):
+                                    count += 1
+            else:
+                # Block format: emails first, then blank line, then authkeys
+                # Split by double newline or find the blank line
+                parts = content.split('\n\n')
+                if len(parts) >= 2:
+                    emails_block = parts[0].strip()
+                    authkeys_block = parts[1].strip()
+                    
+                    emails = [e.strip() for e in emails_block.split('\n') if e.strip()]
+                    authkeys = [a.strip() for a in authkeys_block.split('\n') if a.strip()]
+                    
+                    # Pair emails with authkeys
+                    for i in range(min(len(emails), len(authkeys))):
+                        email = emails[i]
+                        authkey = authkeys[i]
+                        if email and authkey and '@' in email:
+                            if CanvaAccountDB.add_account(email, authkey):
+                                count += 1
+                else:
+                    # Try single blank line split
+                    lines = content.split('\n')
+                    # Find the blank line index
+                    blank_idx = -1
+                    for i, line in enumerate(lines):
+                        if not line.strip():
+                            blank_idx = i
+                            break
+                    
+                    if blank_idx > 0:
+                        emails = [l.strip() for l in lines[:blank_idx] if l.strip()]
+                        authkeys = [l.strip() for l in lines[blank_idx+1:] if l.strip()]
+                        
+                        for i in range(min(len(emails), len(authkeys))):
+                            email = emails[i]
+                            authkey = authkeys[i]
+                            if email and authkey and '@' in email:
+                                if CanvaAccountDB.add_account(email, authkey):
+                                    count += 1
+            
+            return count
+        except Exception as e:
+            logger.error(f"Error importing accounts: {e}")
+            return count
