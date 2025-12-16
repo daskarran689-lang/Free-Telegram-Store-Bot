@@ -268,9 +268,12 @@ def casso_webhook():
                     price_num = productprice
                 buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, "")
                 try:
-                    # Create inline keyboard with "Get OTP" button - include email in callback
+                    # Create inline keyboard with OTP buttons for each email
                     inline_kb = types.InlineKeyboardMarkup()
-                    inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
+                    # Split emails (productkeys may contain multiple emails separated by newline)
+                    email_list = [e.strip() for e in productkeys.split('\n') if e.strip() and '@' in e]
+                    for email in email_list:
+                        inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã cho {email}", callback_data=f"otp_{email}"))
                     
                     # Create reply keyboard
                     otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -281,10 +284,10 @@ def casso_webhook():
                     )
                     otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
                     
-                    # Send message with inline button
+                    # Send message with inline buttons
                     bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                    # Also set reply keyboard
-                    bot.send_message(buyerid, "👇 Hoặc sử dụng nút ở menu bên dưới:", reply_markup=otp_keyboard)
+                    # Set reply keyboard with minimal message
+                    bot.send_message(buyerid, "🎉", reply_markup=otp_keyboard)
                 except Exception as e:
                     logger.error(f"Error notifying buyer: {e}")
                 
@@ -481,6 +484,12 @@ def callback_query(call):
             # User cancels their pending order (not yet in database)
             ordernumber = int(call.data.replace('cancel_order_', ''))
             try:
+                # Get order info before deleting
+                cancelled_order = pending_orders_info.get(ordernumber, {})
+                cancelled_username = cancelled_order.get("username", call.from_user.username or "user")
+                cancelled_product = cancelled_order.get("product_name", "N/A")
+                cancelled_amount = cancelled_order.get("price", 0)
+                
                 # Remove from pending orders (memory only, not in DB)
                 if ordernumber in pending_orders_info:
                     del pending_orders_info[ordernumber]
@@ -489,9 +498,23 @@ def callback_query(call):
                 if ordernumber in pending_qr_messages:
                     del pending_qr_messages[ordernumber]
                 
+                # Notify admin about cancelled order
+                admins = GetDataFromDB.GetAdminIDsInDB() or []
+                for admin in admins:
+                    try:
+                        admin_msg = f"❌ *Đơn hàng đã bị hủy*\n"
+                        admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                        admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                        admin_msg += f"👤 Khách: @{cancelled_username}\n"
+                        admin_msg += f"📦 Sản phẩm: {cancelled_product}\n"
+                        admin_msg += f"💰 Số tiền: {cancelled_amount:,} VND"
+                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                    except:
+                        pass
+                
                 bot.answer_callback_query(call.id, get_text("order_cancelled", lang, ordernumber))
                 bot.delete_message(call.message.chat.id, call.message.message_id)
-                bot.send_message(call.message.chat.id, get_text("order_cancelled", lang, ordernumber), reply_markup=create_main_keyboard(lang, id), parse_mode='Markdown')
+                bot.send_message(call.message.chat.id, get_text("order_cancelled", lang, ordernumber), reply_markup=create_main_keyboard(lang, user_id), parse_mode='Markdown')
             except Exception as e:
                 logger.error(f"Cancel order error: {e}")
                 bot.answer_callback_query(call.id, f"Error: {e}")
