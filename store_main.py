@@ -1762,9 +1762,9 @@ otp_rate_limit = {}
 
 # Bank account settings (loaded from database or env)
 BANK_CONFIG = {
-    "bank_code": os.getenv("BANK_CODE", ""),
-    "account_number": os.getenv("BANK_ACCOUNT", ""),
-    "account_name": os.getenv("BANK_NAME", "")
+    "bank_code": os.getenv("BANK_CODE", "MB"),
+    "account_number": os.getenv("BANK_ACCOUNT", "11116666008888"),
+    "account_name": os.getenv("BANK_ACCOUNT_NAME", os.getenv("BANK_NAME", "DINH LE NGOC DAI"))
 }
 
 def get_bank_config():
