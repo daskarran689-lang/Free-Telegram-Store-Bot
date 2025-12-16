@@ -1,6 +1,9 @@
 import flask
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import requests
+
+# Vietnam timezone (UTC+7)
+VN_TIMEZONE = timezone(timedelta(hours=7))
 import time
 import logging
 from flask_session import Session
@@ -1846,7 +1849,7 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         transfer_content = f"DH{ordernumber}"
         
         # Store order info in memory (NOT in database yet - only save after payment confirmed)
-        now = datetime.now()
+        now = datetime.now(VN_TIMEZONE)
         orderdate = now.strftime("%Y-%m-%d %H:%M:%S")
         product_name_with_qty = f"{order_info[1]} x{quantity}" if quantity > 1 else order_info[1]
         productdownloadlink = GetDataFromDB.GetProductDownloadLink(order_info[0])
