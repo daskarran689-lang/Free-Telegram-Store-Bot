@@ -268,9 +268,9 @@ def casso_webhook():
                     price_num = productprice
                 buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, "")
                 try:
-                    # Create inline keyboard with "Get OTP" button
+                    # Create inline keyboard with "Get OTP" button - include email in callback
                     inline_kb = types.InlineKeyboardMarkup()
-                    inline_kb.add(types.InlineKeyboardButton(text="🔑 Lấy mã xác thực", callback_data="get_otp_inline"))
+                    inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
                     
                     # Create reply keyboard
                     otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -377,6 +377,12 @@ def callback_query(call):
             bot.answer_callback_query(call.id, get_text("language_changed", new_lang))
             bot.send_message(call.message.chat.id, get_text("language_changed", new_lang), reply_markup=create_main_keyboard(new_lang, user_id), parse_mode='Markdown')
             return
+        elif call.data.startswith("otp_"):
+            # Handle inline OTP button with specific email
+            email = call.data.replace("otp_", "")
+            bot.answer_callback_query(call.id, f"Đang lấy mã cho {email}...")
+            get_otp_for_email(user_id, email, lang)
+            return
         elif call.data == "get_otp_inline":
             # Handle inline OTP button - redirect to OTP handler
             bot.answer_callback_query(call.id, "Đang lấy mã xác thực...")
@@ -452,7 +458,7 @@ def callback_query(call):
                             price_num = productprice
                         buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, "")
                         inline_kb = types.InlineKeyboardMarkup()
-                        inline_kb.add(types.InlineKeyboardButton(text="🔑 Lấy mã xác thực", callback_data="get_otp_inline"))
+                        inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
                         bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
                         
                         bot.answer_callback_query(call.id, get_text("order_confirmed", lang, ordernumber))
@@ -2632,7 +2638,6 @@ def ViewPendingOrders(message):
 
 # Keep-alive mechanism to prevent Render from sleeping
 import threading
-import time as time_module_keepalive
 
 def keep_alive():
     """Ping self every 10 minutes to prevent Render free tier from sleeping"""
@@ -2643,7 +2648,7 @@ def keep_alive():
     
     while True:
         try:
-            time_module_keepalive.sleep(600)  # 10 minutes
+            time.sleep(600)  # 10 minutes
             response = requests.get(f"{render_url}/health", timeout=30)
             logger.info(f"Keep-alive ping: {response.status_code}")
         except Exception as e:
