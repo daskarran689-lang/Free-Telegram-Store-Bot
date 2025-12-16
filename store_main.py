@@ -288,11 +288,19 @@ def casso_webhook():
                 except Exception as e:
                     logger.error(f"Error notifying buyer: {e}")
                 
-                # Notify admin
+                # Notify admin with Canva account info
                 admins = GetDataFromDB.GetAdminIDsInDB() or []
                 for admin in admins:
                     try:
-                        bot.send_message(admin[0], f"✅ Đơn hàng #{ordernumber} đã tự động xác nhận!\nKhách: @{buyerusername}\nSố tiền: {amount:,} VND")
+                        admin_msg = f"✅ *Đơn hàng đã thanh toán thành công!*\n"
+                        admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                        admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                        admin_msg += f"👤 Khách: @{buyerusername}\n"
+                        admin_msg += f"📦 Sản phẩm: {productname}\n"
+                        admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+                        admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                        admin_msg += f"🔑 *Tài khoản đã cấp:*\n`{productkeys}`"
+                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
                     except:
                         pass
                 
@@ -1835,6 +1843,21 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         
         # Store quantity for later use when confirming order
         pending_order_quantities[ordernumber] = quantity
+        
+        # Notify admin about new pending order
+        admins = GetDataFromDB.GetAdminIDsInDB() or []
+        for admin in admins:
+            try:
+                admin_msg = f"🛒 *Đơn hàng mới đang chờ thanh toán*\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{username}\n"
+                admin_msg += f"📦 Sản phẩm: {product_name_with_qty}\n"
+                admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+                admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
+                bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+            except:
+                pass
         
         # Generate VietQR
         qr_url = generate_vietqr_url(
