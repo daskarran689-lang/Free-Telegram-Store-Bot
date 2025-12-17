@@ -300,7 +300,7 @@ def casso_webhook():
                     buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                     buyer_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
                     buyer_msg += f"📍 Đơn hàng của bạn chiếm slot {promo_slot_start}-{promo_slot_end}/10\n"
-                    buyer_msg += f"🎀 *Inbox admin để được tặng thêm {promo_bonus} tài khoản!*"
+                    buyer_msg += f"🎀 *Inbox admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!*"
                 try:
                     # Create inline keyboard with OTP buttons for each email
                     inline_kb = types.InlineKeyboardMarkup()
@@ -504,7 +504,7 @@ def callback_query(call):
                                 buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                                 buyer_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
                                 buyer_msg += f"📍 Đơn hàng của bạn chiếm slot {promo_slot}/{max_promo}\n"
-                                buyer_msg += f"🎀 *Inbox admin để được tặng thêm 1 tài khoản!*"
+                                buyer_msg += f"🎀 *Inbox admin kèm Mã đơn `{ordernumber}` để được tặng thêm 1 tài khoản!*"
                         
                         inline_kb = types.InlineKeyboardMarkup()
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
@@ -663,7 +663,16 @@ def send_welcome(message):
         else:
             # Customer - minimal DB calls
             CreateDatas.AddAuser(id, usname)
-            welcome_msg = get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
+            
+            # Check promotion and add banner if active
+            promo_banner = ""
+            promo_info = PromotionDB.get_promotion_info()
+            if promo_info and promo_info["is_active"]:
+                remaining = promo_info["max_count"] - promo_info["sold_count"]
+                if remaining > 0:
+                    promo_banner = f"🎉 *ĐANG CÓ KHUYẾN MÃI MUA 1 TẶNG 1!*\n🎁 Còn lại {remaining} slot\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            welcome_msg = promo_banner + get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
             # Send welcome with photo (using Telegram file_id for speed)
             welcome_photo = "AgACAgUAAxkBAAIJDGlCseCl8GNEMppfwlYCUDLvfr1LAAMNaxuCZRBWIvBQc4pixGQBAAMCAAN3AAM2BA"
             try:
