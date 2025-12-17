@@ -3,13 +3,13 @@ from datetime import datetime
 import threading
 import logging
 import os
+from contextlib import contextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database configuration
-# Check if PostgreSQL URL is provided (for production on Render/Supabase)
 DATABASE_URL = os.getenv('DATABASE_URL', '')
 
 db_lock = threading.Lock()
@@ -17,13 +17,38 @@ db_lock = threading.Lock()
 if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     # Use PostgreSQL with psycopg3
     import psycopg
+    from psycopg import OperationalError
     
     USE_POSTGRES = True
     logger.info("Using PostgreSQL database")
     
+    @contextmanager
+    def get_db_connection():
+        """Context manager for PostgreSQL - creates new connection each time"""
+        conn = None
+        try:
+            conn = psycopg.connect(
+                DATABASE_URL, 
+                connect_timeout=10,
+                options="-c statement_timeout=15000",  # 15 second timeout
+                autocommit=True
+            )
+            yield conn
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+        finally:
+            if conn and not conn.closed:
+                conn.close()
+    
+    # For backward compatibility - create initial connection
     def get_connection():
-        # Add connection timeout and auto-reconnect
-        return psycopg.connect(DATABASE_URL, connect_timeout=10, options="-c statement_timeout=30000")
+        return psycopg.connect(
+            DATABASE_URL, 
+            connect_timeout=10,
+            options="-c statement_timeout=15000",
+            autocommit=True
+        )
     
     db_connection = get_connection()
     cursor = db_connection.cursor()
@@ -36,8 +61,13 @@ else:
     db_connection = sqlite3.connect(DB_FILE, check_same_thread=False)
     db_connection.row_factory = sqlite3.Row
     cursor = db_connection.cursor()
+    
+    @contextmanager
+    def get_db_connection():
+        """Context manager for SQLite - uses global connection"""
+        yield db_connection
 
-# Backward compatibility aliases for old code
+# Backward compatibility aliases
 DBConnection = db_connection
 connected = cursor
 
@@ -47,15 +77,7 @@ class DBCursor:
         self._cursor = cursor
     
     def execute(self, query, params=None):
-        global db_connection, cursor
         if USE_POSTGRES:
-            # Reconnect if connection is closed
-            try:
-                self._cursor.execute("SELECT 1")
-            except:
-                db_connection = get_connection()
-                cursor = db_connection.cursor()
-                self._cursor = cursor
             # Convert ? to %s for PostgreSQL
             query = query.replace("?", "%s")
         if params:
@@ -72,6 +94,24 @@ class DBCursor:
 
 # Replace connected with wrapper
 connected = DBCursor(cursor)
+
+def execute_with_new_connection(query, params=None, fetch='none'):
+    """Execute query with a fresh connection (prevents connection stuck)"""
+    if USE_POSTGRES:
+        query = query.replace("?", "%s")
+    
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        if params:
+            cur.execute(query, params)
+        else:
+            cur.execute(query)
+        
+        if fetch == 'one':
+            return cur.fetchone()
+        elif fetch == 'all':
+            return cur.fetchall()
+        return None
 
 class CreateTables:
     """Database table creation and management"""
@@ -260,12 +300,14 @@ class CreateTables:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )""")
                 
-                db_connection.commit()
+                if not USE_POSTGRES:
+                    db_connection.commit()
                 logger.info("All database tables created successfully")
                 
         except Exception as e:
             logger.error(f"Error creating database tables: {e}")
-            db_connection.rollback()
+            if not USE_POSTGRES:
+                db_connection.rollback()
             raise
         
 # Initialize tables
@@ -306,55 +348,56 @@ class CreateDatas:
     def add_user(user_id, username):
         """Add a new user to the database"""
         try:
-            with db_lock:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
                 if USE_POSTGRES:
-                    cursor.execute(
+                    cur.execute(
                         "INSERT INTO ShopUserTable (user_id, username, wallet) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO NOTHING",
                         (user_id, username, 0)
                     )
                 else:
-                    cursor.execute(
+                    cur.execute(
                         "INSERT OR IGNORE INTO ShopUserTable (user_id, username, wallet) VALUES (?, ?, ?)",
                         (user_id, username, 0)
                     )
-                db_connection.commit()
+                    conn.commit()
                 logger.info(f"User added: {username} (ID: {user_id})")
                 return True
         except Exception as e:
             logger.error(f"Error adding user {username}: {e}")
-            db_connection.rollback()
             return False
             
     @staticmethod
     def add_admin(admin_id, username):
         """Add a new admin to the database"""
         try:
-            with db_lock:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
                 if USE_POSTGRES:
-                    cursor.execute(
+                    cur.execute(
                         "INSERT INTO ShopAdminTable (admin_id, username, wallet) VALUES (%s, %s, %s) ON CONFLICT (admin_id) DO NOTHING",
                         (admin_id, username, 0)
                     )
                 else:
-                    cursor.execute(
+                    cur.execute(
                         "INSERT OR IGNORE INTO ShopAdminTable (admin_id, username, wallet) VALUES (?, ?, ?)",
                         (admin_id, username, 0)
                     )
-                db_connection.commit()
+                    conn.commit()
                 logger.info(f"Admin added: {username} (ID: {admin_id})")
                 return True
         except Exception as e:
             logger.error(f"Error adding admin {username}: {e}")
-            db_connection.rollback()
             return False
 
     @staticmethod
     def add_product(productnumber, admin_id, username):
         """Add a new product to the database"""
         try:
-            with db_lock:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
                 if USE_POSTGRES:
-                    cursor.execute("""
+                    cur.execute("""
                         INSERT INTO ShopProductTable 
                         (productnumber, admin_id, username, productname, productdescription, 
                          productprice, productimagelink, productdownloadlink, productkeysfile, 
@@ -363,7 +406,7 @@ class CreateDatas:
                     """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
                           'https://nil.nil', 'NIL', 0, 'Default Category'))
                 else:
-                    cursor.execute("""
+                    cur.execute("""
                         INSERT INTO ShopProductTable 
                         (productnumber, admin_id, username, productname, productdescription, 
                          productprice, productimagelink, productdownloadlink, productkeysfile, 
@@ -371,12 +414,11 @@ class CreateDatas:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
                           'https://nil.nil', 'NIL', 0, 'Default Category'))
-                db_connection.commit()
+                    conn.commit()
                 logger.info(f"Product {productnumber} added by admin {username}")
                 return True
         except Exception as e:
             logger.error(f"Error adding product {productnumber}: {e}")
-            db_connection.rollback()
             return False
     
     # Backward compatibility methods
@@ -400,9 +442,10 @@ class CreateDatas:
                  productdownloadlink, productkeys, ordernumber, productnumber, payment_id):
         """Add a new order to the database"""
         try:
-            with db_lock:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
                 if USE_POSTGRES:
-                    cursor.execute("""
+                    cur.execute("""
                         INSERT INTO ShopOrderTable 
                         (buyerid, buyerusername, productname, productprice, orderdate, 
                          paidmethod, productdownloadlink, productkeys, buyercomment, 
@@ -412,7 +455,7 @@ class CreateDatas:
                           paidmethod, productdownloadlink, productkeys, 'NIL', 
                           ordernumber, productnumber, payment_id))
                 else:
-                    cursor.execute("""
+                    cur.execute("""
                         INSERT INTO ShopOrderTable 
                         (buyerid, buyerusername, productname, productprice, orderdate, 
                          paidmethod, productdownloadlink, productkeys, buyercomment, 
@@ -421,158 +464,146 @@ class CreateDatas:
                     """, (buyer_id, username, productname, productprice, orderdate, 
                           paidmethod, productdownloadlink, productkeys, 'NIL', 
                           ordernumber, productnumber, payment_id))
-                db_connection.commit()
+                    conn.commit()
                 logger.info(f"Order {ordernumber} added for user {username}")
                 return True
         except Exception as e:
             logger.error(f"Error adding order {ordernumber}: {e}")
-            db_connection.rollback()
             return False
 
     def AddCategory(categorynumber, categoryname):
         try:
-            AddData = f"Insert into ShopCategoryTable (categorynumber, categoryname) values('{categorynumber}', '{categoryname}')"
-            connected.execute(AddData)
-            DBConnection.commit()
+            query = "INSERT INTO ShopCategoryTable (categorynumber, categoryname) VALUES (?, ?)"
+            execute_with_new_connection(query, (categorynumber, categoryname))
         except Exception as e:
-            print(e)
+            logger.error(f"Error adding category: {e}")
 
     def AddEmptyRow():
-        AddData = f"Insert into PaymentMethodTable (admin_id, username, method_name, activated) values('None', 'None', 'None', 'None')"
-        connected.execute(AddData)
-        DBConnection.commit()
+        query = "INSERT INTO PaymentMethodTable (admin_id, username, method_name, activated) VALUES ('None', 'None', 'None', 'None')"
+        execute_with_new_connection(query)
     
     def AddCryptoPaymentMethod(id, username, token_keys_clientid, secret_keys, method_name):
         try:
-            connected.execute(f"UPDATE PaymentMethodTable SET admin_id = ?, username = ?, token_keys_clientid = ?, secret_keys = ?, activated = 'NO' WHERE method_name = '{method_name}'", (id, username, token_keys_clientid, secret_keys))
-            DBConnection.commit()
+            query = f"UPDATE PaymentMethodTable SET admin_id = ?, username = ?, token_keys_clientid = ?, secret_keys = ?, activated = 'NO' WHERE method_name = '{method_name}'"
+            execute_with_new_connection(query, (id, username, token_keys_clientid, secret_keys))
         except Exception as e:
-            print(e)
+            logger.error(f"Error adding crypto payment: {e}")
 
     def UpdateOrderConfirmed(paidmethod, ordernumber):
         try:
-            connected.execute(f"UPDATE ShopOrderTable SET paidmethod = ? WHERE ordernumber = ?", (paidmethod, ordernumber))
-            DBConnection.commit()
+            query = "UPDATE ShopOrderTable SET paidmethod = ? WHERE ordernumber = ?"
+            execute_with_new_connection(query, (paidmethod, ordernumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating order confirmed: {e}")
 
     def UpdatePaymentMethodToken(id, username, token_keys_clientid, method_name):
         try:
-            connected.execute(f"UPDATE PaymentMethodTable SET admin_id = '{id}', username = '{username}', token_keys_clientid = '{token_keys_clientid}' WHERE method_name = '{method_name}'")
-            DBConnection.commit()
+            query = f"UPDATE PaymentMethodTable SET admin_id = '{id}', username = '{username}', token_keys_clientid = '{token_keys_clientid}' WHERE method_name = '{method_name}'"
+            execute_with_new_connection(query)
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating payment token: {e}")
 
     def UpdatePaymentMethodSecret(id, username, secret_keys, method_name):
         try:
-            connected.execute(f"UPDATE PaymentMethodTable SET admin_id = '{id}', username = '{username}', secret_keys = '{secret_keys}' WHERE method_name = '{method_name}'")
-            DBConnection.commit()
+            query = f"UPDATE PaymentMethodTable SET admin_id = '{id}', username = '{username}', secret_keys = '{secret_keys}' WHERE method_name = '{method_name}'"
+            execute_with_new_connection(query)
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating payment secret: {e}")
 
     def Update_A_Category(categoryname, categorynumber):
         try:
-            connected.execute("UPDATE ShopCategoryTable SET categoryname = ? WHERE categorynumber = ?", (categoryname, categorynumber))
-            DBConnection.commit()
+            query = "UPDATE ShopCategoryTable SET categoryname = ? WHERE categorynumber = ?"
+            execute_with_new_connection(query, (categoryname, categorynumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating category: {e}")
 
     def UpdateOrderComment(buyercomment, ordernumber):
         try:
-            connected.execute(f"UPDATE ShopOrderTable SET buyercomment = ? WHERE ordernumber = ?", (buyercomment, ordernumber))
-            DBConnection.commit()
+            query = "UPDATE ShopOrderTable SET buyercomment = ? WHERE ordernumber = ?"
+            execute_with_new_connection(query, (buyercomment, ordernumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating order comment: {e}")
 
     def UpdateOrderPaymentMethod(paidmethod, ordernumber):
         try:
-            connected.execute(f"UPDATE ShopOrderTable SET paidmethod = ? WHERE ordernumber = ?", (paidmethod, ordernumber))
-            DBConnection.commit()
+            query = "UPDATE ShopOrderTable SET paidmethod = ? WHERE ordernumber = ?"
+            execute_with_new_connection(query, (paidmethod, ordernumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating order payment method: {e}")
 
     def UpdateOrderPurchasedKeys(productkeys, ordernumber):
         try:
-            connected.execute(f"UPDATE ShopOrderTable SET productkeys = ? WHERE ordernumber = ?", (productkeys, ordernumber))
-            DBConnection.commit()
+            query = "UPDATE ShopOrderTable SET productkeys = ? WHERE ordernumber = ?"
+            execute_with_new_connection(query, (productkeys, ordernumber))
         except Exception as e:
-            print(e)
-
+            logger.error(f"Error updating order keys: {e}")
 
     def AddPaymentMethod(id, username, method_name):
-        AddData = f"Insert into PaymentMethodTable (admin_id, username, method_name, activated) values('{id}', '{username}', '{method_name}', 'YES')"
-        connected.execute(AddData)
-        DBConnection.commit()
+        query = "INSERT INTO PaymentMethodTable (admin_id, username, method_name, activated) VALUES (?, ?, ?, 'YES')"
+        execute_with_new_connection(query, (id, username, method_name))
 
     def UpdateProductName(productname, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productname = ? WHERE productnumber = ?", (productname, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productname = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productname, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product name: {e}")
 
     def UpdateProductDescription(productdescription, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productdescription = ? WHERE productnumber = ?", (productdescription, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productdescription = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productdescription, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product description: {e}")
     
     def UpdateProductPrice(productprice, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productprice = ? WHERE productnumber = ?", (productprice, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productprice = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productprice, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product price: {e}")
     
     def UpdateProductproductimagelink(productimagelink, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productimagelink = ? WHERE productnumber = ?", (productimagelink, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productimagelink = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productimagelink, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product image: {e}")
 
     def UpdateProductproductdownloadlink(productdownloadlink, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productdownloadlink = ? WHERE productnumber = ?", (productdownloadlink, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productdownloadlink = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productdownloadlink, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product download link: {e}")
     
     def UpdateProductKeysFile(productkeysfile, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productkeysfile = ? WHERE productnumber = ?", (productkeysfile, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productkeysfile = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productkeysfile, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product keys file: {e}")
     
     def UpdateProductQuantity(productquantity, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productquantity = ? WHERE productnumber = ?", (productquantity, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productquantity = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productquantity, productnumber))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating product quantity: {e}")
     
     def UpdateProductCategory(productcategory, productnumber):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productcategory = ? WHERE productnumber = ?", (productcategory, productnumber))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productcategory = ? WHERE productnumber = ?"
+            execute_with_new_connection(query, (productcategory, productnumber))
         except Exception as e:
-            print(e)
-
-    def UpdateProductQuantity(productquantity, productnumber):
-        try:
-            connected.execute(f"UPDATE ShopProductTable SET productquantity = ? WHERE productnumber = ?", (productquantity, productnumber))
-            DBConnection.commit()
-        except Exception as e:
-            print(e)
+            logger.error(f"Error updating product category: {e}")
 
     def Update_All_ProductCategory(new_category, productcategory):
         try:
-            connected.execute(f"UPDATE ShopProductTable SET productcategory = ? WHERE productcategory = ?", (new_category, productcategory))
-            DBConnection.commit()
+            query = "UPDATE ShopProductTable SET productcategory = ? WHERE productcategory = ?"
+            execute_with_new_connection(query, (new_category, productcategory))
         except Exception as e:
-            print(e)
+            logger.error(f"Error updating all product categories: {e}")
 
 class GetDataFromDB:
     """Database query operations"""
@@ -581,456 +612,429 @@ class GetDataFromDB:
     def GetUserWalletInDB(userid):
         """Get user wallet balance from database"""
         try:
-            with db_lock:
-                connected.execute("SELECT wallet FROM ShopUserTable WHERE user_id = ?", (userid,))
-                result = connected.fetchone()
-                return result[0] if result else 0
+            result = execute_with_new_connection(
+                "SELECT wallet FROM ShopUserTable WHERE user_id = ?", 
+                (userid,), 
+                fetch='one'
+            )
+            return result[0] if result else 0
         except Exception as e:
             logger.error(f"Error getting user wallet for {userid}: {e}")
             return 0
         
     def GetUserNameInDB(userid):
         try:
-            connected.execute(f"SELECT username FROM ShopUserTable WHERE user_id = '{userid}'")
-            shopuser = connected.fetchone()[0]
-            return shopuser
+            result = execute_with_new_connection(
+                f"SELECT username FROM ShopUserTable WHERE user_id = '{userid}'",
+                fetch='one'
+            )
+            return result[0] if result else ""
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting username: {e}")
             return ""
         
     def GetAdminNameInDB(userid):
         try:
-            connected.execute(f"SELECT username FROM ShopAdminTable WHERE admin_id = '{userid}'")
-            shopuser = connected.fetchone()[0]
-            return shopuser
+            result = execute_with_new_connection(
+                f"SELECT username FROM ShopAdminTable WHERE admin_id = '{userid}'",
+                fetch='one'
+            )
+            return result[0] if result else ""
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting admin name: {e}")
             return ""
         
     def GetUserIDsInDB():
         try:
-            connected.execute(f"SELECT user_id FROM ShopUserTable")
-            shopuser = connected.fetchall()
-            return shopuser
+            return execute_with_new_connection(
+                "SELECT user_id FROM ShopUserTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting user IDs: {e}")
             return None
 
     def GetProductName(productnumber):
         try:
-            connected.execute(f"SELECT productname FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productname = connected.fetchone()[0]
-            return productname
+            result = execute_with_new_connection(
+                f"SELECT productname FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product name: {e}")
             return None
 
     def GetProductDescription(productnumber):
         try:
-            connected.execute(f"SELECT productdescription FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productdescription = connected.fetchone()[0]
-            return productdescription
+            result = execute_with_new_connection(
+                f"SELECT productdescription FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product description: {e}")
             return None
 
     def GetProductPrice(productnumber):
         try:
-            connected.execute(f"SELECT productprice FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productprice = connected.fetchone()[0]
-            return productprice
+            result = execute_with_new_connection(
+                f"SELECT productprice FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product price: {e}")
             return None
         
     def GetProductImageLink(productnumber):
         try:
-            connected.execute(f"SELECT productimagelink FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productimagelink = connected.fetchone()[0]
-            return productimagelink
+            result = execute_with_new_connection(
+                f"SELECT productimagelink FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product image: {e}")
             return None
     
     def GetProductDownloadLink(productnumber):
         try:
-            connected.execute(f"SELECT productdownloadlink FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productimagelink = connected.fetchone()[0]
-            return productimagelink
+            result = execute_with_new_connection(
+                f"SELECT productdownloadlink FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product download link: {e}")
             return None
 
     def GetProductNumber(productnumber):
         try:
-            connected.execute(f"SELECT productnumber FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productnumbers = connected.fetchone()[0]
-            return productnumbers
+            result = execute_with_new_connection(
+                f"SELECT productnumber FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+        except Exception as e:
+            logger.error(f"Error getting product number: {e}")
             return None
 
     def GetProductQuantity(productnumber):
         try:
-            connected.execute(f"SELECT productquantity FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productprice = connected.fetchone()[0]
-            return productprice
+            result = execute_with_new_connection(
+                f"SELECT productquantity FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product quantity: {e}")
             return None
 
     def GetProduct_A_Category(productnumber):
         try:
-            connected.execute(f"SELECT productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productcategory = connected.fetchone()[0]
-            return productcategory
+            result = execute_with_new_connection(
+                f"SELECT productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product category: {e}")
             return None
 
     def Get_A_CategoryName(categorynumber):
-        try: 
-            connected.execute(f"SELECT DISTINCT categoryname FROM ShopCategoryTable WHERE categorynumber = '{categorynumber}'")
-            productcategory = connected.fetchone()[0]
-            if productcategory is not None:
-                return productcategory    
-            else:
-                return None
+        try:
+            result = execute_with_new_connection(
+                f"SELECT DISTINCT categoryname FROM ShopCategoryTable WHERE categorynumber = '{categorynumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting category name: {e}")
             return None
 
     def GetCategoryIDsInDB():
         try:
-            connected.execute(f"SELECT categorynumber, categoryname FROM ShopCategoryTable")
-            categories =  connected.fetchall()
-            if categories is not None:
-                return categories
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT categorynumber, categoryname FROM ShopCategoryTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting category IDs: {e}")
             return None
 
     def GetCategoryNumProduct(productcategory):
         try:
-            connected.execute(f"SELECT COUNT(*) FROM ShopProductTable WHERE productcategory = '{productcategory}'")
-            categories =  connected.fetchall()
-            if categories is not None:
-                return categories
-            else:
-                return None
+            return execute_with_new_connection(
+                f"SELECT COUNT(*) FROM ShopProductTable WHERE productcategory = '{productcategory}'",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting category product count: {e}")
             return None
         
     def GetProduct_A_AdminID(productnumber):
         try:
-            connected.execute(f"SELECT admin_id FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productcategory = connected.fetchone()[0]
-            return productcategory
+            result = execute_with_new_connection(
+                f"SELECT admin_id FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product admin ID: {e}")
             return None
 
     def GetAdminIDsInDB():
         try:
-            connected.execute(f"SELECT admin_id FROM ShopAdminTable")
-            shopadmin =  connected.fetchall()
-            return shopadmin
+            return execute_with_new_connection(
+                "SELECT admin_id FROM ShopAdminTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting admin IDs: {e}")
             return None
 
     def GetAdminUsernamesInDB():
         try:
-            shopadmin = []
-            connected.execute(f"SELECT username FROM ShopAdminTable")
-            shopadmin =  connected.fetchall()
-            return shopadmin
+            return execute_with_new_connection(
+                "SELECT username FROM ShopAdminTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting admin usernames: {e}")
             return None
 
     def GetProductNumberName():
         try:
-            productnumbers_name = []
-            connected.execute(f"SELECT DISTINCT productnumber, productname FROM ShopProductTable")
-            productnumbers_name = connected.fetchall()
-            if productnumbers_name is not None:
-                return productnumbers_name
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT productnumber, productname FROM ShopProductTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product number/name: {e}")
             return None
 
     def GetProductInfos():
         try:
-            productnumbers_name = []
-            connected.execute(f"SELECT DISTINCT productnumber, productname, productprice FROM ShopProductTable")
-            productnumbers_name = connected.fetchall()
-            if productnumbers_name is not None:
-                return productnumbers_name
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT productnumber, productname, productprice FROM ShopProductTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product infos: {e}")
             return None
 
     def GetProductInfo():
         try:
-            productnumbers_name = []
-            connected.execute(f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable")
-            productnumbers_name = connected.fetchall()
-            if productnumbers_name is not None:
-                return productnumbers_name
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product info: {e}")
             return None
 
     def GetProductInfoByCTGName(productcategory):
         try:
-            productnumbers_name = []
-            connected.execute(f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productcategory = '{productcategory}'")
-            productnumbers_name = connected.fetchall()
-            if productnumbers_name is not None:
-                return productnumbers_name
-            else:
-                return None
+            return execute_with_new_connection(
+                f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productcategory = '{productcategory}'",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product info by category: {e}")
             return None
         
     def GetProductInfoByPName(productnumber):
         try:
-            productnumbers_name = []
-            connected.execute(f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            productnumbers_name = connected.fetchall()
-            if productnumbers_name is not None:
-                return productnumbers_name
-            else:
-                return None
+            return execute_with_new_connection(
+                f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product info by number: {e}")
             return None
         
     def GetUsersInfo():
         try:
-            user_infos = []
-            connected.execute(f"SELECT DISTINCT user_id, username, wallet FROM ShopUserTable")
-            user_infos = connected.fetchall()
-            if user_infos is not None:
-                return user_infos
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT user_id, username, wallet FROM ShopUserTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting users info: {e}")
             return None
         
     def AllUsers():
         try:
-            connected.execute(f"SELECT COUNT(user_id) FROM ShopUserTable")
-            alluser = connected.fetchall()
-            if alluser is not None:
-                return alluser
-            else:
-                return 0
+            return execute_with_new_connection(
+                "SELECT COUNT(user_id) FROM ShopUserTable",
+                fetch='all'
+            ) or 0
         except Exception as e:
-            print(e)
+            logger.error(f"Error counting users: {e}")
             return 0
     
     def AllAdmins():
         try:
-            connected.execute(f"SELECT COUNT(admin_id) FROM ShopAdminTable")
-            alladmin = connected.fetchall()
-            if alladmin is not None:
-                return alladmin
-            else:
-                return 0
+            return execute_with_new_connection(
+                "SELECT COUNT(admin_id) FROM ShopAdminTable",
+                fetch='all'
+            ) or 0
         except Exception as e:
-            print(e)
+            logger.error(f"Error counting admins: {e}")
             return 0
 
     def AllProducts():
         try:
-            connected.execute(f"SELECT COUNT(productnumber) FROM ShopProductTable")
-            allproduct = connected.fetchall()
-            if allproduct is not None:
-                return allproduct
-            else:
-                return 0
+            return execute_with_new_connection(
+                "SELECT COUNT(productnumber) FROM ShopProductTable",
+                fetch='all'
+            ) or 0
         except Exception as e:
-            print(e)
+            logger.error(f"Error counting products: {e}")
             return 0
 
     def AllOrders():
         try:
-            connected.execute(f"SELECT COUNT(buyerid) FROM ShopOrderTable")
-            allorder = connected.fetchall()
-            if allorder is not None:
-                return allorder
-            else:
-                return 0
+            return execute_with_new_connection(
+                "SELECT COUNT(buyerid) FROM ShopOrderTable",
+                fetch='all'
+            ) or 0
         except Exception as e:
-            print(e)
+            logger.error(f"Error counting orders: {e}")
             return 0
              
     def GetAdminsInfo():
         try:
-            admin_infos = []
-            connected.execute(f"SELECT DISTINCT admin_id, username, wallet FROM ShopAdminTable")
-            admin_infos = connected.fetchall()
-            if admin_infos is not None:
-                return admin_infos
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT admin_id, username, wallet FROM ShopAdminTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting admins info: {e}")
             return None
         
     def GetOrderInfo():
         try:
-            order_infos = []
-            connected.execute(f"SELECT DISTINCT ordernumber, productname, buyerusername FROM ShopOrderTable")
-            order_infos = connected.fetchall()
-            if order_infos is not None:
-                return order_infos
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT ordernumber, productname, buyerusername FROM ShopOrderTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting order info: {e}")
             return None
 
     def GetPaymentMethods():
         try:
-            payment_method = []
-            connected.execute(f"SELECT DISTINCT method_name, activated, username FROM PaymentMethodTable")
-            payment_method = connected.fetchall()
-            if payment_method is not None:
-                return payment_method
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT method_name, activated, username FROM PaymentMethodTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting payment methods: {e}")
             return None
 
     def GetPaymentMethodsAll(method_name):
         try:
-            payment_method = []
-            connected.execute(f"SELECT DISTINCT method_name, token_keys_clientid, secret_keys FROM PaymentMethodTable WHERE method_name = '{method_name}'")
-            payment_method = connected.fetchall()
-            if payment_method is not None:
-                return payment_method
-            else:
-                return None
+            return execute_with_new_connection(
+                f"SELECT DISTINCT method_name, token_keys_clientid, secret_keys FROM PaymentMethodTable WHERE method_name = '{method_name}'",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting payment method details: {e}")
             return None
  
     def GetPaymentMethodTokenKeysCleintID(method_name):
         try:
-            connected.execute(f"SELECT DISTINCT token_keys_clientid FROM PaymentMethodTable WHERE method_name = '{method_name}'")
-            payment_method = connected.fetchone()[0]
-            if payment_method is not None:
-                return payment_method
-            else:
-                return None
+            result = execute_with_new_connection(
+                f"SELECT DISTINCT token_keys_clientid FROM PaymentMethodTable WHERE method_name = '{method_name}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting payment token: {e}")
             return None
 
     def GetPaymentMethodSecretKeys(method_name):
         try:
-            connected.execute(f"SELECT DISTINCT secret_keys FROM PaymentMethodTable WHERE method_name = '{method_name}'")
-            payment_method = connected.fetchone()[0]
-            if payment_method is not None:
-                return payment_method
-            else:
-                return None
+            result = execute_with_new_connection(
+                f"SELECT DISTINCT secret_keys FROM PaymentMethodTable WHERE method_name = '{method_name}'",
+                fetch='one'
+            )
+            return result[0] if result else None
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting payment secret: {e}")
             return None
 
     def GetAllPaymentMethodsInDB():
         try:
-            payment_methods = []
-            connected.execute(f"SELECT DISTINCT method_name FROM PaymentMethodTable")
-            payment_methods = connected.fetchall()
-            if payment_methods is not None:
-                return payment_methods
-            else:
-                return None
+            return execute_with_new_connection(
+                "SELECT DISTINCT method_name FROM PaymentMethodTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting all payment methods: {e}")
             return None
         
     def GetProductCategories():
         try:
-            productcategory = []
-            connected.execute(f"SELECT DISTINCT productcategory FROM ShopProductTable")
-            productcategory = connected.fetchall()
-            return productcategory
+            return execute_with_new_connection(
+                "SELECT DISTINCT productcategory FROM ShopProductTable",
+                fetch='all'
+            ) or "Default Category"
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product categories: {e}")
             return "Default Category"
         
     def GetProductIDs():
         try:
-            productnumbers = []
-            connected.execute(f"SELECT productnumber FROM ShopProductTable")
-            productnumbers = connected.fetchall()
-            return productnumbers
+            return execute_with_new_connection(
+                "SELECT productnumber FROM ShopProductTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting product IDs: {e}")
             return None
     
     def GetOrderDetails(ordernumber):
         try:
-            order_details = []
-            connected.execute(f"SELECT DISTINCT buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber FROM ShopOrderTable WHERE ordernumber = '{ordernumber}' AND paidmethod != 'NO'")
-            order_details = connected.fetchall()
-            if order_details is not None:
-                return order_details
-            else:
-                return None
+            return execute_with_new_connection(
+                f"SELECT DISTINCT buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber FROM ShopOrderTable WHERE ordernumber = '{ordernumber}' AND paidmethod != 'NO'",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting order details: {e}")
             return None
         
     def GetOrderIDs_Buyer(buyerid):
         try:
-            productnumbers = []
-            connected.execute(f"SELECT ordernumber FROM ShopOrderTable WHERE buyerid = '{buyerid}' AND paidmethod != 'NO' ")
-            productnumbers = connected.fetchall()
-            return productnumbers
+            return execute_with_new_connection(
+                f"SELECT ordernumber FROM ShopOrderTable WHERE buyerid = '{buyerid}' AND paidmethod != 'NO'",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting buyer order IDs: {e}")
             return None
 
     def GetOrderIDs():
         try:
-            productnumbers = []
-            connected.execute(f"SELECT ordernumber FROM ShopOrderTable")
-            productnumbers = connected.fetchall()
-            return productnumbers
+            return execute_with_new_connection(
+                "SELECT ordernumber FROM ShopOrderTable",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting order IDs: {e}")
             return None
 
     def GetAllUnfirmedOrdersUser(buyerid):
         try:
-            payment_method = []
-            connected.execute(f"SELECT DISTINCT ordernumber, productname, buyerusername, payment_id, productnumber FROM ShopOrderTable WHERE paidmethod = 'NO' AND buyerid = '{buyerid}' AND payment_id != ordernumber")
-            payment_method = connected.fetchall()
-            if payment_method is not None:
-                return payment_method
-            else:
-                return None
+            return execute_with_new_connection(
+                f"SELECT DISTINCT ordernumber, productname, buyerusername, payment_id, productnumber FROM ShopOrderTable WHERE paidmethod = 'NO' AND buyerid = '{buyerid}' AND payment_id != ordernumber",
+                fetch='all'
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error getting unconfirmed orders: {e}")
             return None
 
 
@@ -1040,52 +1044,51 @@ class CleanData:
 
     def CleanShopUserTable():
         try:
-            connected.execute("DELETE FROM ShopUserTable")
-            DBConnection.commit()
+            execute_with_new_connection("DELETE FROM ShopUserTable")
         except Exception as e:
-            print(e)
+            logger.error(f"Error cleaning user table: {e}")
 
     def CleanShopProductTable():
         try:
-            connected.execute("DELETE FROM ShopProductTable")
-            DBConnection.commit()
+            execute_with_new_connection("DELETE FROM ShopProductTable")
         except Exception as e:
-            print(e)
+            logger.error(f"Error cleaning product table: {e}")
     
-    def delete_an_order(user_id, ordernumber):
+    def delete_an_order(ordernumber):
         try:
-            connected.execute(f"DELETE FROM ShopOrderTable WHERE user_id = '{user_id}' AND ordernumber = '{ordernumber}'")
-            DBConnection.commit()
+            execute_with_new_connection(
+                "DELETE FROM ShopOrderTable WHERE ordernumber = ?",
+                (ordernumber,)
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error deleting order: {e}")
 
     def delete_a_product(productnumber):
         try:
-            connected.execute(f"DELETE FROM ShopProductTable WHERE productnumber = '{productnumber}'")
-            DBConnection.commit()
+            execute_with_new_connection(
+                "DELETE FROM ShopProductTable WHERE productnumber = ?",
+                (productnumber,)
+            )
         except Exception as e:
-            print(e)
-
-    def delete_an_order(ordernumber):
-        try:
-            connected.execute(f"DELETE FROM ShopOrderTable WHERE ordernumber = '{ordernumber}'")
-            DBConnection.commit()
-        except Exception as e:
-            print(e)
+            logger.error(f"Error deleting product: {e}")
 
     def delete_a_payment_method(method_name):
         try:
-            connected.execute(f"DELETE FROM PaymentMethodTable WHERE method_name = '{method_name}'")
-            DBConnection.commit()
+            execute_with_new_connection(
+                "DELETE FROM PaymentMethodTable WHERE method_name = ?",
+                (method_name,)
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error deleting payment method: {e}")
 
     def delete_a_category(categorynumber):
         try:
-            connected.execute(f"DELETE FROM ShopCategoryTable WHERE categorynumber = '{categorynumber}'")
-            DBConnection.commit()
+            execute_with_new_connection(
+                "DELETE FROM ShopCategoryTable WHERE categorynumber = ?",
+                (categorynumber,)
+            )
         except Exception as e:
-            print(e)
+            logger.error(f"Error deleting category: {e}")
 
 
 
@@ -1103,35 +1106,36 @@ class CanvaAccountDB:
     def add_account(email, authkey):
         """Add a new Canva account to database"""
         try:
-            with db_lock:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
                 if USE_POSTGRES:
-                    connected.execute(
+                    cur.execute(
                         "INSERT INTO CanvaAccountTable (email, authkey, status) VALUES (%s, %s, 'available') ON CONFLICT (email) DO NOTHING",
                         (email, authkey)
                     )
                 else:
-                    connected.execute(
+                    cur.execute(
                         "INSERT OR IGNORE INTO CanvaAccountTable (email, authkey, status) VALUES (?, ?, 'available')",
                         (email, authkey)
                     )
-                db_connection.commit()
+                    conn.commit()
                 logger.info(f"Canva account added: {email}")
                 return True
         except Exception as e:
             logger.error(f"Error adding Canva account {email}: {e}")
-            db_connection.rollback()
             return False
     
     @staticmethod
     def get_available_accounts(count=1):
         """Get available Canva accounts"""
         try:
-            with db_lock:
-                connected.execute(
-                    "SELECT id, email, authkey FROM CanvaAccountTable WHERE status = 'available' LIMIT ?",
-                    (count,)
-                )
-                return connected.fetchall()
+            query = "SELECT id, email, authkey FROM CanvaAccountTable WHERE status = 'available' LIMIT ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (count,))
+                return cur.fetchall()
         except Exception as e:
             logger.error(f"Error getting available accounts: {e}")
             return []
@@ -1140,28 +1144,30 @@ class CanvaAccountDB:
     def assign_account_to_buyer(account_id, buyer_id, order_number):
         """Assign account to a buyer after purchase"""
         try:
-            with db_lock:
-                connected.execute(
-                    "UPDATE CanvaAccountTable SET buyer_id = ?, order_number = ?, status = 'sold' WHERE id = ?",
-                    (buyer_id, order_number, account_id)
-                )
-                db_connection.commit()
+            query = "UPDATE CanvaAccountTable SET buyer_id = ?, order_number = ?, status = 'sold' WHERE id = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (buyer_id, order_number, account_id))
+                if not USE_POSTGRES:
+                    conn.commit()
                 return True
         except Exception as e:
             logger.error(f"Error assigning account: {e}")
-            db_connection.rollback()
             return False
     
     @staticmethod
     def get_authkey_by_email(email):
         """Get authkey for an email (for OTP retrieval)"""
         try:
-            with db_lock:
-                connected.execute(
-                    "SELECT authkey FROM CanvaAccountTable WHERE email = ?",
-                    (email,)
-                )
-                result = connected.fetchone()
+            query = "SELECT authkey FROM CanvaAccountTable WHERE email = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (email,))
+                result = cur.fetchone()
                 return result[0] if result else None
         except Exception as e:
             logger.error(f"Error getting authkey for {email}: {e}")
@@ -1171,12 +1177,13 @@ class CanvaAccountDB:
     def get_buyer_accounts(buyer_id):
         """Get all accounts owned by a buyer"""
         try:
-            with db_lock:
-                connected.execute(
-                    "SELECT email, order_number, created_at FROM CanvaAccountTable WHERE buyer_id = ?",
-                    (buyer_id,)
-                )
-                return connected.fetchall()
+            query = "SELECT email, order_number, created_at FROM CanvaAccountTable WHERE buyer_id = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (buyer_id,))
+                return cur.fetchall()
         except Exception as e:
             logger.error(f"Error getting buyer accounts: {e}")
             return []
@@ -1185,36 +1192,37 @@ class CanvaAccountDB:
     def remove_buyer_from_account(email, buyer_id):
         """Remove buyer from account (user deletes from their list)"""
         try:
-            with db_lock:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
                 # Verify the account belongs to this buyer
-                connected.execute(
-                    "SELECT id FROM CanvaAccountTable WHERE email = ? AND buyer_id = ?",
-                    (email, buyer_id)
-                )
-                result = connected.fetchone()
+                query1 = "SELECT id FROM CanvaAccountTable WHERE email = ? AND buyer_id = ?"
+                query2 = "UPDATE CanvaAccountTable SET buyer_id = NULL, status = 'deleted_by_user' WHERE email = ? AND buyer_id = ?"
+                if USE_POSTGRES:
+                    query1 = query1.replace("?", "%s")
+                    query2 = query2.replace("?", "%s")
+                
+                cur.execute(query1, (email, buyer_id))
+                result = cur.fetchone()
                 if not result:
                     return False
                 
-                # Clear buyer info (account becomes unusable, not available for resale)
-                connected.execute(
-                    "UPDATE CanvaAccountTable SET buyer_id = NULL, status = 'deleted_by_user' WHERE email = ? AND buyer_id = ?",
-                    (email, buyer_id)
-                )
-                db_connection.commit()
+                cur.execute(query2, (email, buyer_id))
+                if not USE_POSTGRES:
+                    conn.commit()
                 logger.info(f"User {buyer_id} removed account {email} from their list")
                 return True
         except Exception as e:
             logger.error(f"Error removing buyer from account: {e}")
-            db_connection.rollback()
             return False
     
     @staticmethod
     def get_account_count():
         """Get count of available accounts"""
         try:
-            with db_lock:
-                connected.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'available'")
-                result = connected.fetchone()
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'available'")
+                result = cur.fetchone()
                 return result[0] if result else 0
         except Exception as e:
             logger.error(f"Error counting accounts: {e}")
@@ -1224,11 +1232,12 @@ class CanvaAccountDB:
     def get_all_accounts():
         """Get all accounts (for admin)"""
         try:
-            with db_lock:
-                connected.execute(
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
                     "SELECT id, email, authkey, buyer_id, order_number, status, created_at FROM CanvaAccountTable"
                 )
-                return connected.fetchall()
+                return cur.fetchall()
         except Exception as e:
             logger.error(f"Error getting all accounts: {e}")
             return []
@@ -1237,13 +1246,17 @@ class CanvaAccountDB:
     def delete_account(account_id):
         """Delete an account"""
         try:
-            with db_lock:
-                connected.execute("DELETE FROM CanvaAccountTable WHERE id = ?", (account_id,))
-                db_connection.commit()
+            query = "DELETE FROM CanvaAccountTable WHERE id = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (account_id,))
+                if not USE_POSTGRES:
+                    conn.commit()
                 return True
         except Exception as e:
             logger.error(f"Error deleting account: {e}")
-            db_connection.rollback()
             return False
     
     @staticmethod
