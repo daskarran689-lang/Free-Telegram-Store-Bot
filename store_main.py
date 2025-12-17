@@ -50,7 +50,8 @@ flask_app = Flask(__name__)
 flask_app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-here')
 
 # Bot connection
-webhook_url = os.getenv('NGROK_HTTPS_URL')
+# Support both RENDER_EXTERNAL_URL (Render) and NGROK_HTTPS_URL (local dev)
+webhook_url = os.getenv('RENDER_EXTERNAL_URL') or os.getenv('NGROK_HTTPS_URL')
 bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
 store_currency = os.getenv('STORE_CURRENCY', 'USD')
 default_admin_id = os.getenv('ADMIN_ID', '')
@@ -60,7 +61,7 @@ TEMPMAIL_EMAIL = os.getenv('TEMPMAIL_EMAIL', '')
 TEMPMAIL_PASSWORD = os.getenv('TEMPMAIL_PASSWORD', '')
 
 if not webhook_url or not bot_token:
-    logger.error("Missing required environment variables: NGROK_HTTPS_URL or TELEGRAM_BOT_TOKEN")
+    logger.error("Missing required environment variables: RENDER_EXTERNAL_URL/NGROK_HTTPS_URL or TELEGRAM_BOT_TOKEN")
     exit(1)
 
 bot = telebot.TeleBot(bot_token, threaded=False)
