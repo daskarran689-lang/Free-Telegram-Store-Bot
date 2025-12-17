@@ -359,22 +359,6 @@ def create_main_keyboard(lang="vi", user_id=None):
     return keyboard
 
 keyboard = create_main_keyboard()
-
-# Language selection handler
-@bot.message_handler(content_types=["text"], func=lambda message: message.text == "🌐 Ngôn ngữ/Language")
-@bot.message_handler(commands=['language', 'lang'])
-def select_language(message):
-    """Handle language selection"""
-    id = message.from_user.id
-    keyboard_lang = types.InlineKeyboardMarkup()
-    for lang_code, lang_data in LANGUAGES.items():
-        keyboard_lang.add(types.InlineKeyboardButton(
-            text=lang_data["name"], 
-            callback_data=f"setlang_{lang_code}"
-        ))
-    bot.send_message(id, get_text("select_language", get_user_lang(id)), reply_markup=keyboard_lang)
-
-
 ##################WELCOME MESSAGE + BUTTONS START#########################
 #Function to list Products and Categories
 @bot.callback_query_handler(func=lambda call: True)
@@ -384,14 +368,7 @@ def callback_query(call):
         user_id = call.from_user.id
         lang = get_user_lang(user_id)
         
-        # Handle language selection
-        if call.data.startswith("setlang_"):
-            new_lang = call.data.replace('setlang_', '')
-            set_user_lang(user_id, new_lang)
-            bot.answer_callback_query(call.id, get_text("language_changed", new_lang))
-            bot.send_message(call.message.chat.id, get_text("language_changed", new_lang), reply_markup=create_main_keyboard(new_lang, user_id), parse_mode='Markdown')
-            return
-        elif call.data.startswith("otp_"):
+        if call.data.startswith("otp_"):
             # Handle inline OTP button with specific email
             email = call.data.replace("otp_", "")
             bot.answer_callback_query(call.id, f"Đang lấy mã cho {email}...")
@@ -1742,18 +1719,18 @@ def handle_buy_with_quantity(message):
         bot.send_message(id, "Không có sản phẩm!", reply_markup=create_main_keyboard(lang, id))
 
 #Command handler and fucntion to shop Items
-@bot.message_handler(commands=['buy', 'muangay', 'mua'])
+@bot.message_handler(commands=['buy'])
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
 def shop_items(message):
     UserOperations.shop_items(message)
 
-# Command aliases for Vietnamese users
-@bot.message_handler(commands=['menu', 'home', 'trangchu'])
+# Command shortcuts
+@bot.message_handler(commands=['menu'])
 def menu_command(message):
     """Redirect to start/home"""
     send_welcome(message)
 
-@bot.message_handler(commands=['donhang', 'orders', 'lichsu'])
+@bot.message_handler(commands=['orders'])
 def orders_command(message):
     """Show user orders"""
     id = message.from_user.id
@@ -1762,7 +1739,7 @@ def orders_command(message):
     message.text = get_text("my_orders", lang)
     my_orders(message)
 
-@bot.message_handler(commands=['hotro', 'support', 'help', 'lienhe'])
+@bot.message_handler(commands=['support'])
 def support_command(message):
     """Show support info"""
     id = message.from_user.id
