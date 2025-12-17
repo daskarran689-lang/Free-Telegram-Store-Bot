@@ -2347,8 +2347,9 @@ def complete_order(message):
 
 # Check if message matches my orders button
 def is_my_orders_button(text):
-    # Exclude admin manage orders button
-    if "Quản lý" in text or "Manage" in text:
+    # Exclude admin buttons
+    admin_keywords = ["Quản lý", "Manage", "Danh sách", "List", "Delete", "Xóa"]
+    if any(kw in text for kw in admin_keywords):
         return False
     keywords = ["My Orders", "Đơn hàng của tôi", "my orders", "đơn hàng của tôi", "Đơn hàng", "đơn hàng", "🛍 Đơn hàng"]
     return any(kw in text for kw in keywords)
