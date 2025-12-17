@@ -605,8 +605,9 @@ def send_welcome(message):
             CreateDatas.AddAuser(id, usname)
             welcome_msg = get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
             try:
-                bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="HTML")
-            except:
+                bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"Failed to send welcome photo: {e}")
                 bot.send_message(message.chat.id, welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error in send_welcome: {e}")
@@ -640,9 +641,9 @@ def admin_switch_user(message):
     
     welcome_msg = f"{get_text('welcome_customer', lang)}\n\n{get_text('wallet_balance', lang)} {user_data} 💰"
     try:
-        bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=keyboard, parse_mode="HTML")
+        bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
     except:
-        bot.send_message(message.chat.id, welcome_msg, reply_markup=keyboard)
+        bot.send_message(message.chat.id, welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
     bot.send_message(id, get_text("user_mode", lang), reply_markup=keyboard)
 
 # Check if message matches manage products button
