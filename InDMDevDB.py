@@ -22,7 +22,8 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     logger.info("Using PostgreSQL database")
     
     def get_connection():
-        return psycopg.connect(DATABASE_URL)
+        # Add connection timeout and auto-reconnect
+        return psycopg.connect(DATABASE_URL, connect_timeout=10, options="-c statement_timeout=30000")
     
     db_connection = get_connection()
     cursor = db_connection.cursor()

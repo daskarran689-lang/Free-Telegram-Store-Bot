@@ -78,7 +78,11 @@ try:
     
     # Set bot commands menu
     commands = [
-        types.BotCommand("start", "Khởi động bot")
+        types.BotCommand("start", "Khởi động bot"),
+        types.BotCommand("menu", "Về trang chủ"),
+        types.BotCommand("buy", "Mua hàng"),
+        types.BotCommand("orders", "Xem đơn hàng"),
+        types.BotCommand("support", "Hỗ trợ")
     ]
     bot.set_my_commands(commands)
     logger.info("Bot commands menu set successfully")
