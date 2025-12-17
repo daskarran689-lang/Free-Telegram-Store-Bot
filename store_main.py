@@ -283,21 +283,16 @@ def casso_webhook():
                     for email in email_list:
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã cho {email}", callback_data=f"otp_{email}"))
                     
-                    # Create reply keyboard
-                    otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    otp_keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
-                    otp_keyboard.row(
-                        types.KeyboardButton(text="🛍 Đơn hàng"),
-                        types.KeyboardButton(text="📞 Hỗ trợ")
-                    )
-                    otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
-                    
-                    # Send message with inline buttons
-                    bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                    # Send celebration image with reply keyboard
-                    bot.send_photo(buyerid, "https://files.catbox.moe/kybwo9.png", reply_markup=otp_keyboard)
+                    # Send photo with caption and inline buttons
+                    success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
+                    bot.send_photo(buyerid, success_photo, caption=buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
                 except Exception as e:
                     logger.error(f"Error notifying buyer: {e}")
+                    # Fallback to text only
+                    try:
+                        bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                    except:
+                        pass
                 
                 # Notify admin with Canva account info
                 admins = GetDataFromDB.GetAdminIDsInDB() or []
@@ -982,9 +977,8 @@ def add_a_product_price(message):
     
     if is_admin(id):
         try:
-            # Remove commas, dots, spaces and convert to number
-            price_text = message.text.replace(',', '').replace('.', '').replace(' ', '').strip()
-            price = int(price_text)
+            # Keep original format (e.g., "40,000")
+            price = message.text.strip()
             msg = bot.send_message(id, get_text("attach_product_photo", lang))
             CreateDatas.UpdateProductPrice(price, productnumbers)
             bot.register_next_step_handler(msg, add_a_product_photo_link)
@@ -1505,13 +1499,12 @@ def save_product_price(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     try:
-        price_text = message.text.replace(',', '').replace('.', '').replace(' ', '').strip()
-        new_price = int(price_text)
+        new_price = message.text.strip()
         CreateDatas.UpdateProductPrice(new_price, edit_product_id)
-        bot.send_message(id, f"✅ Đã cập nhật giá: *{new_price:,} VND*", parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
+        bot.send_message(id, f"✅ Đã cập nhật giá: *{new_price} VND*", parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
     except Exception as e:
         print(e)
-        bot.send_message(id, "❌ Lỗi khi cập nhật. Vui lòng nhập số hợp lệ.", reply_markup=create_main_keyboard(lang, id))
+        bot.send_message(id, "❌ Lỗi khi cập nhật.", reply_markup=create_main_keyboard(lang, id))
 
 # Edit product image
 @bot.message_handler(content_types=["text"], func=lambda message: message.text == "🖼 Sửa ảnh")
