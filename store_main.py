@@ -2900,34 +2900,34 @@ def is_delete_order_button(text):
 def DeleteOrderMNG(message):
     try:
         id = message.from_user.id
+        lang = get_user_lang(id)
         
-        
-        admins = GetDataFromDB.GetAdminIDsInDB()
         all_orders = GetDataFromDB.GetOrderInfo()
         if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
             keyboardadmin.row_width = 2
-            if all_orders ==  []:
-                key1 = types.KeyboardButton(text="List Orders 🛍")
-                key2 = types.KeyboardButton(text="Home 🏘")
+            if all_orders == [] or all_orders is None:
+                key1 = types.KeyboardButton(text=get_text("list_orders", lang))
+                key2 = types.KeyboardButton(text=get_text("home", lang))
                 keyboardadmin.add(key1)
                 keyboardadmin.add(key2)
-                bot.send_message(id, "No Order available in your store, /start", reply_markup=keyboardadmin)
+                bot.send_message(id, "📭 Chưa có đơn hàng nào trong cửa hàng", reply_markup=keyboardadmin)
             else:
-                bot.send_message(id, f"👇 OrderID - ProductName - BuyerUserName 👇")
-                for ordernumber, productname, buyerusername in all_orders:
-                    bot.send_message(id, f"/{ordernumber} - `{productname}` - @{buyerusername}", parse_mode="Markdown")
-                msg = bot.send_message(id, "Click on an Order ID of the order you want to delete: ✅", parse_mode="Markdown")
+                bot.send_message(id, "👇 Mã đơn hàng - Tên sản phẩm - Khách - Ngày mua 👇")
+                for ordernumber, productname, buyerusername, orderdate in all_orders:
+                    bot.send_message(id, f"/{ordernumber} - {productname} - @{buyerusername} - {orderdate}", parse_mode="Markdown")
+                msg = bot.send_message(id, "👆 Nhấn vào mã đơn hàng bạn muốn xóa", parse_mode="Markdown")
                 bot.register_next_step_handler(msg, delete_an_order)
         else:
-            bot.send_message(id, "⚠️ Only Admin can use this command !!!", reply_markup=keyboard)
+            bot.send_message(id, "⚠️ Chỉ Admin mới có quyền sử dụng!", reply_markup=create_main_keyboard(lang, id))
     except Exception as e:
         print(e)
-        msg = bot.send_message(id, "Error 404 🚫, try again with corrected input.")
+        msg = bot.send_message(id, "❌ Lỗi, vui lòng thử lại!")
         bot.register_next_step_handler(msg, DeleteOrderMNG)
 def delete_an_order(message):
     try:
         id = message.from_user.id
+        lang = get_user_lang(id)
         ordernu = message.text
         ordernumber = ordernu[1:99]
         ordernum = GetDataFromDB.GetOrderIDs()
@@ -2941,25 +2941,23 @@ def delete_an_order(message):
             except Exception as e:
                 print(e)
             
-            
-            admins = GetDataFromDB.GetAdminIDsInDB()
             if is_admin(id):
                 keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
                 keyboardadmin.row_width = 2
-                key1 = types.KeyboardButton(text="List Orders 🛍")
-                key2 = types.KeyboardButton(text="Home 🏘")
+                key1 = types.KeyboardButton(text=get_text("list_orders", lang))
+                key2 = types.KeyboardButton(text=get_text("home", lang))
                 keyboardadmin.add(key1)
                 keyboardadmin.add(key2)
                 CleanData.delete_an_order(ordernumber)
-                msg = bot.send_message(id, "Deleted successfully 🗑️\n\n\nWhat will you like to do next ?\n\nSelect one of buttons 👇", reply_markup=keyboardadmin, parse_mode="Markdown")
+                msg = bot.send_message(id, f"✅ Đã xóa đơn hàng `{ordernumber}` thành công!", reply_markup=keyboardadmin, parse_mode="Markdown")
             else:
-                bot.send_message(id, "⚠️ Only Admin can use this command !!!", reply_markup=keyboard)
+                bot.send_message(id, "⚠️ Chỉ Admin mới có quyền sử dụng!", reply_markup=create_main_keyboard(lang, id))
         else:
-            msg = bot.send_message(id, "Error 404 🚫, try again with corrected input.")
+            msg = bot.send_message(id, "❌ Mã đơn hàng không hợp lệ, vui lòng thử lại!")
             bot.register_next_step_handler(msg, delete_an_order)
     except Exception as e:
         print(e)
-        msg = bot.send_message(id, "Error 404 🚫, try again with corrected input.")
+        msg = bot.send_message(id, "❌ Lỗi, vui lòng thử lại!")
         bot.register_next_step_handler(msg, delete_an_order)
 
 # Check if message matches payment methods button
