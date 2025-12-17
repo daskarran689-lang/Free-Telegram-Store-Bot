@@ -302,12 +302,12 @@ def casso_webhook():
                     else:
                         slot_display = f"{promo_slot_start}-{promo_slot_end}/10"
                     
-                    promo_msg = f"\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
-                    promo_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
+                    promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
+                    promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                     promo_msg += f"📍 Đơn hàng của bạn chiếm slot {slot_display}\n"
-                    promo_msg += f"🎀 Inbox admin kèm Mã đơn {ordernumber} để được tặng thêm {promo_bonus} tài khoản!"
+                    promo_msg += f"📩 Inbox Admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
                 
-                buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
+                buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, promo_msg)
                 try:
                     # Create inline keyboard with OTP buttons for each email
                     inline_kb = types.InlineKeyboardMarkup()
@@ -524,12 +524,12 @@ def callback_query(call):
                                 else:
                                     slot_display = f"{promo_slot_start}-{promo_slot_end}/{max_promo}"
                                 
-                                promo_msg = f"\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
-                                promo_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
+                                promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
+                                promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                                 promo_msg += f"📍 Đơn hàng của bạn chiếm slot {slot_display}\n"
-                                promo_msg += f"📩 Inbox Admin kèm Mã đơn {ordernumber} để được tặng thêm {promo_bonus} tài khoản!"
+                                promo_msg += f"📩 Inbox Admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
                         
-                        buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
+                        buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, promo_msg)
                         
                         inline_kb = types.InlineKeyboardMarkup()
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
