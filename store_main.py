@@ -2863,33 +2863,36 @@ def is_list_orders_button(text):
 def ListOrders(message):
     try:
         id = message.from_user.id
+        lang = get_user_lang(id)
         
-        
-        admins = GetDataFromDB.GetAdminIDsInDB()
         all_orders = GetDataFromDB.GetOrderInfo()
         if is_admin(id):
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
             keyboardadmin.row_width = 2
-            if all_orders ==  []:
-                bot.send_message(id, "No Order available in your store, /start")
+            if all_orders == [] or all_orders is None:
+                bot.send_message(id, "📭 Chưa có đơn hàng nào trong cửa hàng")
             else:
-                bot.send_message(id, "Your Oders List: ✅")
-                bot.send_message(id, f"👇 OrderID - ProductName - BuyerUserName👇")
-                for ordernumber, productname, buyerusername in all_orders:
+                bot.send_message(id, "📋 *DANH SÁCH ĐƠN HÀNG*", parse_mode="Markdown")
+                for ordernumber, productname, buyerusername, orderdate in all_orders:
                     import time
-                    time.sleep(0.5)
-                    bot.send_message(id, f"`{ordernumber}` - `{productname}` - @{buyerusername}")
-            key1 = types.KeyboardButton(text="List Orders 🛍")
-            key2 = types.KeyboardButton(text="Delete Order 🗑️")
-            key3 = types.KeyboardButton(text="Home 🏘")
+                    time.sleep(0.3)
+                    order_msg = f"━━━━━━━━━━━━━━━━━━━━\n"
+                    order_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                    order_msg += f"📦 Sản phẩm: {productname}\n"
+                    order_msg += f"👤 Khách: @{buyerusername}\n"
+                    order_msg += f"📅 Ngày mua: {orderdate}"
+                    bot.send_message(id, order_msg, parse_mode="Markdown")
+            key1 = types.KeyboardButton(text=get_text("list_orders", lang))
+            key2 = types.KeyboardButton(text=get_text("delete_order", lang))
+            key3 = types.KeyboardButton(text=get_text("home", lang))
             keyboardadmin.add(key1)
             keyboardadmin.add(key2, key3)
-            bot.send_message(id, f"List Completed ✅", reply_markup=keyboardadmin)
+            bot.send_message(id, "✅ Hoàn tất!", reply_markup=keyboardadmin)
         else:
-            bot.send_message(id, "⚠️ Only Admin can use this command !!!", reply_markup=keyboard)
+            bot.send_message(id, "⚠️ Chỉ Admin mới có quyền sử dụng!", reply_markup=create_main_keyboard(lang, id))
     except Exception as e:
         print(e)
-        bot.send_message(id, "Error 404 🚫, try again with corrected input.")
+        bot.send_message(id, "❌ Lỗi, vui lòng thử lại!")
 
 
 # Check if message matches delete order button

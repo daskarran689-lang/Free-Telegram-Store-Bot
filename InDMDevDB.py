@@ -962,7 +962,7 @@ class GetDataFromDB:
     def GetOrderInfo():
         try:
             return execute_with_new_connection(
-                "SELECT DISTINCT ordernumber, productname, buyerusername FROM ShopOrderTable",
+                "SELECT DISTINCT ordernumber, productname, buyerusername, orderdate FROM ShopOrderTable ORDER BY orderdate DESC",
                 fetch='all'
             )
         except Exception as e:
