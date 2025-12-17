@@ -1271,6 +1271,24 @@ class PromotionDB:
         except Exception as e:
             logger.error(f"Error getting promotion info: {e}")
             return None
+    
+    @staticmethod
+    def set_max_count(max_count):
+        """Set maximum promotion slots"""
+        try:
+            query = "UPDATE PromotionTable SET max_count = ? WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (max_count, PromotionDB.PROMO_NAME))
+                if not USE_POSTGRES:
+                    conn.commit()
+                logger.info(f"Promotion max count set to {max_count}")
+                return True
+        except Exception as e:
+            logger.error(f"Error setting max count: {e}")
+            return False
 
 # Initialize promotion record
 PromotionDB.init_promotion()

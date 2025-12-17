@@ -107,7 +107,7 @@ LANGUAGES = {
         # Messages - Orders
         "no_order_completed": "📭 *No Orders Yet*\n_You haven't made any purchase. Start shopping now!_",
         "order_info": "━━━━━━━━━━━━━━━━━━━━\n📦 *{}*\n━━━━━━━━━━━━━━━━━━━━\n🆔 Mã đơn hàng: `{}`\n📅 Ngày mua: _{}_\n💰 Giá: *{:,} {}*\n{}\n🔑 Tài khoản: `{}`\n━━━━━━━━━━━━━━━━━━━━",
-        "your_new_order": "✅ *PAYMENT SUCCESSFUL!*\n━━━━━━━━━━━━━━━━━━━━\n🆔 Mã đơn hàng: `{}`\n📅 Ngày mua: _{}_\n📦 Gói: *{}*\n💰 Giá: *{:,} {}*\n━━━━━━━━━━━━━━━━━━━━\n🔑 *Tài khoản Canva:*\n`{}`\n━━━━━━━━━━━━━━━━━━━━\n📌 _Click button below to get login code_{}",
+        "your_new_order": "✅ *PAYMENT SUCCESSFUL!*{}\n━━━━━━━━━━━━━━━━━━━━\n🆔 Mã đơn hàng: `{}`\n📅 Ngày mua: _{}_\n📦 Gói: *{}*\n💰 Giá: *{:,} {}*\n━━━━━━━━━━━━━━━━━━━━\n🔑 *Tài khoản Canva:*\n`{}`\n━━━━━━━━━━━━━━━━━━━━\n📌 _Click button below to get login code_",
         "thank_order": "🙏 *Thank you for your order!*",
         "write_note": "Would you like to write a note to the Seller ?",
         "reply_note": "Reply with your note or reply with NIL to proceed",
@@ -275,7 +275,7 @@ LANGUAGES = {
         # Messages - Orders
         "no_order_completed": "📭 *Chưa có đơn hàng*\n_Bạn chưa mua sản phẩm nào. Bắt đầu mua sắm ngay!_",
         "order_info": "━━━━━━━━━━━━━━━━━━━━\n📦 *{}*\n━━━━━━━━━━━━━━━━━━━━\n🆔 Mã đơn hàng: `{}`\n📅 Ngày mua: _{}_\n💰 Giá: *{:,} {}*\n{}\n🔑 Tài khoản: `{}`\n━━━━━━━━━━━━━━━━━━━━",
-        "your_new_order": "✅ *THANH TOÁN THÀNH CÔNG!*\n━━━━━━━━━━━━━━━━━━━━\n🆔 Mã đơn hàng: `{}`\n📅 Ngày mua: _{}_\n📦 Gói: *{}*\n💰 Giá: *{:,} {}*\n━━━━━━━━━━━━━━━━━━━━\n🔑 *Tài khoản Canva:*\n`{}`\n🔐 *Mật khẩu:* `dlndaicanvaedu`\n━━━━━━━━━━━━━━━━━━━━\n👇 _Bấm nút bên dưới để lấy mã xác thực cho email (dùng cho việc đăng nhập, đổi mail, v.v...)_{}",
+        "your_new_order": "✅ *THANH TOÁN THÀNH CÔNG!*{}\n━━━━━━━━━━━━━━━━━━━━\n🆔 Mã đơn hàng: `{}`\n📅 Ngày mua: _{}_\n📦 Gói: *{}*\n💰 Giá: *{:,} {}*\n━━━━━━━━━━━━━━━━━━━━\n🔑 *Tài khoản Canva:*\n`{}`\n🔐 *Mật khẩu:* `dlndaicanvaedu`\n━━━━━━━━━━━━━━━━━━━━\n👇 _Bấm nút bên dưới để lấy mã xác thực cho email (dùng cho việc đăng nhập, đổi mail, v.v...)_",
         "thank_order": "🙏 *Cảm ơn bạn đã mua hàng!*",
         "write_note": "Bạn có muốn viết ghi chú cho Người bán không ?",
         "reply_note": "Trả lời với ghi chú hoặc trả lời NIL để tiếp tục",

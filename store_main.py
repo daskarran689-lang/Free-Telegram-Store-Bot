@@ -296,18 +296,18 @@ def casso_webhook():
                 # Build promotion message if eligible (to insert after "THANH TOÁN THÀNH CÔNG!")
                 promo_msg = ""
                 if promo_bonus > 0:
-                    # Format slot display: single = "1/10", multiple = "8-9/10"
+                    # Format slot display: single = "1", multiple = "8-9"
                     if promo_bonus == 1:
-                        slot_display = f"{promo_slot_start}/10"
+                        slot_display = f"{promo_slot_start}"
                     else:
-                        slot_display = f"{promo_slot_start}-{promo_slot_end}/10"
+                        slot_display = f"{promo_slot_start}-{promo_slot_end}"
                     
-                    promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
+                    promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI MUA 1 TẶNG 1!*\n"
                     promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    promo_msg += f"📍 Đơn hàng của bạn chiếm slot {slot_display}\n"
+                    promo_msg += f"🎯 Suất khuyến mãi: {slot_display}\n"
                     promo_msg += f"📩 Inbox Admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
                 
-                buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, promo_msg)
+                buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
                 try:
                     # Create inline keyboard with OTP buttons for each email
                     inline_kb = types.InlineKeyboardMarkup()
@@ -520,16 +520,16 @@ def callback_query(call):
                                 
                                 # Format slot display
                                 if promo_bonus == 1:
-                                    slot_display = f"{promo_slot_start}/{max_promo}"
+                                    slot_display = f"{promo_slot_start}"
                                 else:
-                                    slot_display = f"{promo_slot_start}-{promo_slot_end}/{max_promo}"
+                                    slot_display = f"{promo_slot_start}-{promo_slot_end}"
                                 
-                                promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
+                                promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI MUA 1 TẶNG 1!*\n"
                                 promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                                promo_msg += f"📍 Đơn hàng của bạn chiếm slot {slot_display}\n"
+                                promo_msg += f"🎯 Suất khuyến mãi: {slot_display}\n"
                                 promo_msg += f"📩 Inbox Admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
                         
-                        buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, promo_msg)
+                        buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
                         
                         inline_kb = types.InlineKeyboardMarkup()
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
@@ -760,11 +760,14 @@ def manage_promotion(message):
     
     promo_info = PromotionDB.get_promotion_info()
     
+    max_slots = promo_info['max_count'] if promo_info else 10
+    
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     if promo_info and promo_info["is_active"]:
-        keyboard.row(types.KeyboardButton(text="🔴 TẮT khuyến mãi"))
+        keyboard.row(types.KeyboardButton(text="� TẮT  khuyến mãi"))
     else:
         keyboard.row(types.KeyboardButton(text="🟢 BẬT khuyến mãi"))
+    keyboard.row(types.KeyboardButton(text="⚙️ Đặt số slot khuyến mãi"))
     keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
     
     status_text = "🎁 *QUẢN LÝ KHUYẾN MÃI MUA 1 TẶNG 1*\n"
@@ -772,18 +775,20 @@ def manage_promotion(message):
     if promo_info:
         if promo_info["is_active"]:
             status_text += f"📊 *Trạng thái:* ✅ ĐANG BẬT\n"
-            status_text += f"📈 *Đã bán:* {promo_info['sold_count']}/{promo_info['max_count']} slot\n"
+            status_text += f"🎫 *Tổng slot:* {promo_info['max_count']}\n"
+            status_text += f"📈 *Đã bán:* {promo_info['sold_count']} slot\n"
             remaining = promo_info['max_count'] - promo_info['sold_count']
             status_text += f"🎯 *Còn lại:* {remaining} slot khuyến mãi\n"
             if promo_info['started_at']:
                 status_text += f"⏰ *Bắt đầu:* {promo_info['started_at']}\n"
         else:
             status_text += f"📊 *Trạng thái:* ❌ TẮT\n"
+            status_text += f"🎫 *Tổng slot:* {promo_info['max_count']}\n"
     else:
         status_text += f"📊 *Trạng thái:* ❌ TẮT\n"
     
     status_text += "━━━━━━━━━━━━━━━━━━━━\n"
-    status_text += "_Khi BẬT: 10 tài khoản đầu tiên sẽ được tặng thêm_\n"
+    status_text += f"_Khi BẬT: {max_slots} tài khoản đầu tiên sẽ được tặng thêm_\n"
     status_text += "_Khi TẮT: Hủy khuyến mãi, bật lại sẽ đếm từ đầu_"
     
     bot.send_message(id, status_text, reply_markup=keyboard, parse_mode="Markdown")
@@ -797,8 +802,10 @@ def enable_promotion(message):
     if not is_admin(id):
         return
     
+    promo_info = PromotionDB.get_promotion_info()
+    max_slots = promo_info['max_count'] if promo_info else 10
     PromotionDB.enable_promotion()
-    bot.send_message(id, "✅ *Đã BẬT khuyến mãi!*\n\n🎁 10 tài khoản tiếp theo sẽ được tặng thêm.\nĐếm bắt đầu từ 0.", reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+    bot.send_message(id, f"✅ *Đã BẬT khuyến mãi!*\n\n🎁 {max_slots} tài khoản tiếp theo sẽ được tặng thêm.\nĐếm bắt đầu từ 0.", reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
 
 # Handler for disable promotion
 @bot.message_handler(content_types=["text"], func=lambda message: "TẮT khuyến mãi" in message.text)
@@ -811,6 +818,45 @@ def disable_promotion(message):
     
     PromotionDB.disable_promotion()
     bot.send_message(id, "❌ *Đã TẮT khuyến mãi!*\n\n_Khuyến mãi đã bị hủy. Bật lại sẽ đếm từ đầu._", reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+
+# Handler for set promotion slots
+@bot.message_handler(content_types=["text"], func=lambda message: "Đặt số slot khuyến mãi" in message.text)
+def set_promo_slots(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        return
+    
+    promo_info = PromotionDB.get_promotion_info()
+    current_slots = promo_info['max_count'] if promo_info else 10
+    
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(types.KeyboardButton(text="5"), types.KeyboardButton(text="10"), types.KeyboardButton(text="15"))
+    keyboard.row(types.KeyboardButton(text="20"), types.KeyboardButton(text="30"), types.KeyboardButton(text="50"))
+    keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+    
+    msg = bot.send_message(id, f"⚙️ *Đặt số slot khuyến mãi*\n\n📊 Hiện tại: {current_slots} slot\n\n_Chọn số slot hoặc nhập số tùy ý:_", reply_markup=keyboard, parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_set_slots)
+
+def process_set_slots(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if message.text == "🏠 Trang chủ":
+        send_welcome(message)
+        return
+    
+    try:
+        new_slots = int(message.text)
+        if new_slots < 1:
+            bot.send_message(id, "❌ Số slot phải lớn hơn 0!", reply_markup=create_main_keyboard(lang, id))
+            return
+        
+        PromotionDB.set_max_count(new_slots)
+        bot.send_message(id, f"✅ *Đã đặt số slot khuyến mãi: {new_slots}*", reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+    except ValueError:
+        bot.send_message(id, "❌ Vui lòng nhập số hợp lệ!", reply_markup=create_main_keyboard(lang, id))
 
 # Check if message matches manage products button
 def is_manage_products_button(text):
@@ -2288,7 +2334,7 @@ def complete_order(message):
     order_details = GetDataFromDB.GetOrderDetails(order_number)
     for buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber in order_details:
         print(f"{order_details}")
-    msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, productprice, store_currency, productkeys, productdownloadlink)
+    msg = get_text("your_new_order", lang, "", ordernumber, orderdate, productname, productprice, store_currency, productkeys)
     bot.send_message(id, text=f"{msg}", reply_markup=create_main_keyboard(lang, id))
 
 # Check if message matches my orders button
