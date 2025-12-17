@@ -70,7 +70,11 @@ class UserOperations:
                 # Use canva_stock instead of productquantity
                 caption = get_text("product_info", lang, productname, productprice, StoreCurrency, canva_stock, productdescription)
                 caption += "\n\n👇 Chọn số lượng muốn mua:"
-                bot.send_photo(id, photo=f"{productimagelink}", caption=caption, reply_markup=inline_kb, parse_mode='HTML')
+                try:
+                    bot.send_photo(id, photo=f"{productimagelink}", caption=caption, reply_markup=inline_kb, parse_mode='HTML')
+                except:
+                    # If image fails, send text only
+                    bot.send_message(id, caption, reply_markup=inline_kb, parse_mode='HTML')
             
             # Set reply keyboard
             bot.send_message(id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=nav_keyboard)

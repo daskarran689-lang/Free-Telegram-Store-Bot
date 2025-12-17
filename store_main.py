@@ -618,7 +618,10 @@ def send_welcome(message):
                     CreateDatas.AddAuser(id,usname)
                 user_data = GetDataFromDB.GetUserWalletInDB(id)
                 welcome_msg = get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
-                bot.send_message(message.chat.id, welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+                try:
+                    bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+                except:
+                    bot.send_message(message.chat.id, welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
         except Exception as e:
             print(e)
             admin_switch_user(message)
@@ -1139,7 +1142,10 @@ def add_a_product_download_link(message):
         productprice = GetDataFromDB.GetProductPrice(productnumbers)
         productquantity = GetDataFromDB.GetProductQuantity(productnumbers)
         captions = f"\n\n\n{get_text('product_title', lang)}: {productname}\n\n\n{get_text('product_number', lang)}: `{productnumber}`\n\n\n{get_text('product_price', lang)}: {productprice} {store_currency} 💰\n\n\n{get_text('quantity_available', lang)}: {productquantity} \n\n\n{get_text('product_description', lang)}: {productdescription}"
-        bot.send_photo(chat_id=message.chat.id, photo=f"{productimage}", caption=f"{captions}", parse_mode='Markdown')
+        try:
+            bot.send_photo(chat_id=message.chat.id, photo=f"{productimage}", caption=f"{captions}", parse_mode='Markdown')
+        except:
+            bot.send_message(message.chat.id, captions, parse_mode='Markdown')
         bot.send_message(id, get_text("product_added", lang), reply_markup=keyboardadmin)
     except Exception as e:
         print(e)
