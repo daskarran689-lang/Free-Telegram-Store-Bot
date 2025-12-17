@@ -1899,7 +1899,7 @@ def orders_command(message):
     lang = get_user_lang(id)
     # Trigger the orders handler
     message.text = get_text("my_orders", lang)
-    my_orders(message)
+    MyOrdersList(message)
 
 @bot.message_handler(commands=['support'])
 def support_command(message):
