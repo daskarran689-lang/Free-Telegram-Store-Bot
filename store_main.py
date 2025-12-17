@@ -289,8 +289,8 @@ def casso_webhook():
                     
                     # Send message with inline buttons
                     bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                    # Set reply keyboard with minimal message
-                    bot.send_message(buyerid, "🎉", reply_markup=otp_keyboard)
+                    # Send celebration image with reply keyboard
+                    bot.send_photo(buyerid, "https://files.catbox.moe/kybwo9.png", reply_markup=otp_keyboard)
                 except Exception as e:
                     logger.error(f"Error notifying buyer: {e}")
                 
