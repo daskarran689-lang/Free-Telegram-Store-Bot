@@ -555,6 +555,14 @@ def products_get(message):
 def is_home_button(text):
     return text in [get_text("home", "en"), get_text("home", "vi"), "Home 🏘", "Trang chủ 🏘", "🏠 Trang chủ"]
 
+# Handler to get file_id when admin sends photo
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    if is_admin(message.from_user.id):
+        file_id = message.photo[-1].file_id  # Largest size
+        logger.info(f"PHOTO FILE_ID: {file_id}")
+        bot.reply_to(message, f"File ID:\n`{file_id}`", parse_mode="Markdown")
+
 #Start command handler and function
 @bot.message_handler(content_types=["text"], func=lambda message: is_home_button(message.text))
 @bot.message_handler(commands=['start'])
