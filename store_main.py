@@ -292,15 +292,22 @@ def casso_webhook():
                     price_num = int(float(str(productprice).replace(',', '').replace('k', '000').replace('K', '000')))
                 except:
                     price_num = productprice
-                buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, "")
                 
-                # Add promotion message if eligible
+                # Build promotion message if eligible (to insert after "THANH TOÁN THÀNH CÔNG!")
+                promo_msg = ""
                 if promo_bonus > 0:
-                    buyer_msg += f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
-                    buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    buyer_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
-                    buyer_msg += f"📍 Đơn hàng của bạn chiếm slot {promo_slot_start}-{promo_slot_end}/10\n"
-                    buyer_msg += f"🎀 *Inbox admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!*"
+                    # Format slot display: single = "1/10", multiple = "8-9/10"
+                    if promo_bonus == 1:
+                        slot_display = f"{promo_slot_start}/10"
+                    else:
+                        slot_display = f"{promo_slot_start}-{promo_slot_end}/10"
+                    
+                    promo_msg = f"\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
+                    promo_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
+                    promo_msg += f"📍 Đơn hàng của bạn chiếm slot {slot_display}\n"
+                    promo_msg += f"🎀 Inbox admin kèm Mã đơn {ordernumber} để được tặng thêm {promo_bonus} tài khoản!"
+                
+                buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
                 try:
                     # Create inline keyboard with OTP buttons for each email
                     inline_kb = types.InlineKeyboardMarkup()
@@ -490,21 +497,39 @@ def callback_query(call):
                             price_num = int(float(str(productprice).replace(',', '').replace('k', '000').replace('K', '000')))
                         except:
                             price_num = productprice
-                        buyer_msg = get_text("your_new_order", lang, ordernumber, orderdate, productname, price_num, store_currency, productkeys, "")
+                        
+                        # Count accounts in this order
+                        order_quantity = len([e for e in productkeys.split('\n') if '@' in e]) if productkeys else 1
+                        if order_quantity < 1:
+                            order_quantity = 1
                         
                         # Check promotion for manual confirm
+                        promo_msg = ""
                         promo_info = PromotionDB.get_promotion_info()
                         if promo_info and promo_info["is_active"]:
                             sold_before = promo_info["sold_count"]
                             max_promo = promo_info["max_count"]
                             if sold_before < max_promo:
-                                promo_slot = sold_before + 1
-                                PromotionDB.increment_sold_count(1)
-                                buyer_msg += f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
-                                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                                buyer_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
-                                buyer_msg += f"📍 Đơn hàng của bạn chiếm slot {promo_slot}/{max_promo}\n"
-                                buyer_msg += f"🎀 *Inbox admin kèm Mã đơn `{ordernumber}` để được tặng thêm 1 tài khoản!*"
+                                # Calculate bonus based on quantity and remaining slots
+                                remaining_slots = max_promo - sold_before
+                                promo_bonus = min(order_quantity, remaining_slots)
+                                promo_slot_start = sold_before + 1
+                                promo_slot_end = min(sold_before + order_quantity, max_promo)
+                                
+                                PromotionDB.increment_sold_count(order_quantity)
+                                
+                                # Format slot display
+                                if promo_bonus == 1:
+                                    slot_display = f"{promo_slot_start}/{max_promo}"
+                                else:
+                                    slot_display = f"{promo_slot_start}-{promo_slot_end}/{max_promo}"
+                                
+                                promo_msg = f"\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI!*\n"
+                                promo_msg += f"🎁 Bạn là 1 trong những người mua 10 tài khoản đầu tiên của bot!\n"
+                                promo_msg += f"📍 Đơn hàng của bạn chiếm slot {slot_display}\n"
+                                promo_msg += f"📩 Inbox Admin kèm Mã đơn {ordernumber} để được tặng thêm {promo_bonus} tài khoản!"
+                        
+                        buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
                         
                         inline_kb = types.InlineKeyboardMarkup()
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
