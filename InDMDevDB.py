@@ -1106,6 +1106,16 @@ class CleanData:
             )
         except Exception as e:
             logger.error(f"Error deleting order: {e}")
+    
+    def delete_all_orders():
+        """Delete all orders from database"""
+        try:
+            execute_with_new_connection("DELETE FROM ShopOrderTable")
+            logger.info("All orders deleted")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting all orders: {e}")
+            return False
 
     def delete_a_product(productnumber):
         try:

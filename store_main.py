@@ -2347,6 +2347,9 @@ def complete_order(message):
 
 # Check if message matches my orders button
 def is_my_orders_button(text):
+    # Exclude admin manage orders button
+    if "Quản lý" in text or "Manage" in text:
+        return False
     keywords = ["My Orders", "Đơn hàng của tôi", "my orders", "đơn hàng của tôi", "Đơn hàng", "đơn hàng", "🛍 Đơn hàng"]
     return any(kw in text for kw in keywords)
 
@@ -2815,12 +2818,40 @@ def ManageOrders(message):
         keyboardadmin.row_width = 2
         key1 = types.KeyboardButton(text=get_text("list_orders", lang))
         key2 = types.KeyboardButton(text=get_text("delete_order", lang))
-        key3 = types.KeyboardButton(text=get_text("home", lang))
+        key3 = types.KeyboardButton(text="🗑️ Xóa tất cả đơn hàng")
+        key4 = types.KeyboardButton(text=get_text("home", lang))
         keyboardadmin.add(key1)
         keyboardadmin.add(key2, key3)
+        keyboardadmin.add(key4)
         bot.send_message(id, get_text("choose_action", lang), reply_markup=keyboardadmin)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+
+# Handler for reset all orders
+@bot.message_handler(content_types=["text"], func=lambda message: "Xóa tất cả đơn hàng" in message.text)
+def reset_all_orders(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        return
+    
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(types.KeyboardButton(text="✅ Xác nhận xóa tất cả"))
+    keyboard.row(types.KeyboardButton(text="❌ Hủy"))
+    
+    bot.send_message(id, "⚠️ *CẢNH BÁO*\n\nBạn có chắc muốn xóa TẤT CẢ đơn hàng?\n_Hành động này không thể hoàn tác!_", reply_markup=keyboard, parse_mode="Markdown")
+
+@bot.message_handler(content_types=["text"], func=lambda message: "Xác nhận xóa tất cả" in message.text)
+def confirm_reset_orders(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        return
+    
+    CleanData.delete_all_orders()
+    bot.send_message(id, "✅ *Đã xóa tất cả đơn hàng!*\n\nTổng đơn hàng đã được reset về 0.", reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
 
 # Check if message matches list orders button
 def is_list_orders_button(text):
