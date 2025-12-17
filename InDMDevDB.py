@@ -323,6 +323,28 @@ class CreateTables:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )""")
                 
+                # Create PromotionTable for Buy 1 Get 1 promotion
+                if USE_POSTGRES:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
+                        id SERIAL PRIMARY KEY,
+                        promo_name TEXT UNIQUE NOT NULL,
+                        is_active INTEGER DEFAULT 0,
+                        sold_count INTEGER DEFAULT 0,
+                        max_count INTEGER DEFAULT 10,
+                        started_at TIMESTAMP DEFAULT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                else:
+                    cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        promo_name TEXT UNIQUE NOT NULL,
+                        is_active INTEGER DEFAULT 0,
+                        sold_count INTEGER DEFAULT 0,
+                        max_count INTEGER DEFAULT 10,
+                        started_at TIMESTAMP DEFAULT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""")
+                
                 if not USE_POSTGRES:
                     db_connection.commit()
                 logger.info("All database tables created successfully")
@@ -1113,10 +1135,145 @@ class CleanData:
             logger.error(f"Error deleting category: {e}")
 
 
+# ============== PROMOTION MANAGEMENT ==============
 
+class PromotionDB:
+    """Database operations for Buy 1 Get 1 promotion"""
+    
+    PROMO_NAME = "buy1get1"
+    
+    @staticmethod
+    def init_promotion():
+        """Initialize promotion record if not exists"""
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                if USE_POSTGRES:
+                    cur.execute(
+                        "INSERT INTO PromotionTable (promo_name, is_active, sold_count, max_count) VALUES (%s, 0, 0, 10) ON CONFLICT (promo_name) DO NOTHING",
+                        (PromotionDB.PROMO_NAME,)
+                    )
+                else:
+                    cur.execute(
+                        "INSERT OR IGNORE INTO PromotionTable (promo_name, is_active, sold_count, max_count) VALUES (?, 0, 0, 10)",
+                        (PromotionDB.PROMO_NAME,)
+                    )
+                    conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error initializing promotion: {e}")
+            return False
+    
+    @staticmethod
+    def is_active():
+        """Check if promotion is active"""
+        try:
+            query = "SELECT is_active FROM PromotionTable WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (PromotionDB.PROMO_NAME,))
+                result = cur.fetchone()
+                return result[0] == 1 if result else False
+        except Exception as e:
+            logger.error(f"Error checking promotion status: {e}")
+            return False
+    
+    @staticmethod
+    def get_sold_count():
+        """Get number of accounts sold during this promotion"""
+        try:
+            query = "SELECT sold_count FROM PromotionTable WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (PromotionDB.PROMO_NAME,))
+                result = cur.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting promotion sold count: {e}")
+            return 0
+    
+    @staticmethod
+    def increment_sold_count(count=1):
+        """Increment sold count when account is sold"""
+        try:
+            query = "UPDATE PromotionTable SET sold_count = sold_count + ? WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (count, PromotionDB.PROMO_NAME))
+                if not USE_POSTGRES:
+                    conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error incrementing sold count: {e}")
+            return False
+    
+    @staticmethod
+    def enable_promotion():
+        """Enable promotion and reset sold count to 0"""
+        try:
+            query = "UPDATE PromotionTable SET is_active = 1, sold_count = 0, started_at = CURRENT_TIMESTAMP WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (PromotionDB.PROMO_NAME,))
+                if not USE_POSTGRES:
+                    conn.commit()
+                logger.info("Promotion enabled and counter reset")
+                return True
+        except Exception as e:
+            logger.error(f"Error enabling promotion: {e}")
+            return False
+    
+    @staticmethod
+    def disable_promotion():
+        """Disable promotion"""
+        try:
+            query = "UPDATE PromotionTable SET is_active = 0 WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (PromotionDB.PROMO_NAME,))
+                if not USE_POSTGRES:
+                    conn.commit()
+                logger.info("Promotion disabled")
+                return True
+        except Exception as e:
+            logger.error(f"Error disabling promotion: {e}")
+            return False
+    
+    @staticmethod
+    def get_promotion_info():
+        """Get full promotion info"""
+        try:
+            query = "SELECT is_active, sold_count, max_count, started_at FROM PromotionTable WHERE promo_name = ?"
+            if USE_POSTGRES:
+                query = query.replace("?", "%s")
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (PromotionDB.PROMO_NAME,))
+                result = cur.fetchone()
+                if result:
+                    return {
+                        "is_active": result[0] == 1,
+                        "sold_count": result[1],
+                        "max_count": result[2],
+                        "started_at": result[3]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Error getting promotion info: {e}")
+            return None
 
-
-
+# Initialize promotion record
+PromotionDB.init_promotion()
 
 
 # ============== CANVA ACCOUNT MANAGEMENT ==============
@@ -1248,6 +1405,19 @@ class CanvaAccountDB:
                 return result[0] if result else 0
         except Exception as e:
             logger.error(f"Error counting accounts: {e}")
+            return 0
+    
+    @staticmethod
+    def get_sold_count():
+        """Get count of sold accounts (for promotion tracking)"""
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'sold'")
+                result = cur.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Error counting sold accounts: {e}")
             return 0
     
     @staticmethod
