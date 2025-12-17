@@ -1742,10 +1742,37 @@ def handle_buy_with_quantity(message):
         bot.send_message(id, "Không có sản phẩm!", reply_markup=create_main_keyboard(lang, id))
 
 #Command handler and fucntion to shop Items
-@bot.message_handler(commands=['buy'])
+@bot.message_handler(commands=['buy', 'muangay', 'mua'])
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
 def shop_items(message):
     UserOperations.shop_items(message)
+
+# Command aliases for Vietnamese users
+@bot.message_handler(commands=['menu', 'home', 'trangchu'])
+def menu_command(message):
+    """Redirect to start/home"""
+    send_welcome(message)
+
+@bot.message_handler(commands=['donhang', 'orders', 'lichsu'])
+def orders_command(message):
+    """Show user orders"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    # Trigger the orders handler
+    message.text = get_text("my_orders", lang)
+    my_orders(message)
+
+@bot.message_handler(commands=['hotro', 'support', 'help', 'lienhe'])
+def support_command(message):
+    """Show support info"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    support_msg = "💬 *Hỗ trợ*\n━━━━━━━━━━━━━━━━━━━━\n"
+    support_msg += "📞 Liên hệ: @dlndai\n"
+    support_msg += "⏰ Hỗ trợ 24/7\n"
+    support_msg += "━━━━━━━━━━━━━━━━━━━━\n"
+    support_msg += "_Gửi tin nhắn trực tiếp để được hỗ trợ_"
+    bot.send_message(id, support_msg, parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
 
 
 # Store pending QR message IDs to delete after payment confirmed
