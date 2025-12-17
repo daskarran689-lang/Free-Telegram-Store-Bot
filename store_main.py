@@ -604,8 +604,10 @@ def send_welcome(message):
             # Customer - minimal DB calls
             CreateDatas.AddAuser(id, usname)
             welcome_msg = get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
+            # Send welcome with photo (using Telegram file_id for speed)
+            welcome_photo = "AgACAgUAAxkBAAE_XOFpQq_xDfLPrRGCnZUk5ecYESuu7gACjwtrG2BBGVa9z_pEQmWC6AEAAwIAA3kAAzYE"
             try:
-                bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
+                bot.send_photo(message.chat.id, photo=welcome_photo, caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
             except Exception as e:
                 logger.warning(f"Failed to send welcome photo: {e}")
                 bot.send_message(message.chat.id, welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
@@ -640,8 +642,9 @@ def admin_switch_user(message):
     keyboard.add(key4)
     
     welcome_msg = f"{get_text('welcome_customer', lang)}\n\n{get_text('wallet_balance', lang)} {user_data} 💰"
+    welcome_photo = "AgACAgUAAxkBAAE_XOFpQq_xDfLPrRGCnZUk5ecYESuu7gACjwtrG2BBGVa9z_pEQmWC6AEAAwIAA3kAAzYE"
     try:
-        bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
+        bot.send_photo(message.chat.id, photo=welcome_photo, caption=welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
     except:
         bot.send_message(message.chat.id, welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
     bot.send_message(id, get_text("user_mode", lang), reply_markup=keyboard)
