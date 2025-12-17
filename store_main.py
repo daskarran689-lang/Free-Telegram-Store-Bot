@@ -283,16 +283,22 @@ def casso_webhook():
                     for email in email_list:
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã cho {email}", callback_data=f"otp_{email}"))
                     
-                    # Send photo with caption and inline buttons
+                    # Create reply keyboard
+                    otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                    otp_keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
+                    otp_keyboard.row(
+                        types.KeyboardButton(text="🛍 Đơn hàng"),
+                        types.KeyboardButton(text="📞 Hỗ trợ")
+                    )
+                    otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+                    
+                    # Send message with inline buttons
+                    bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                    # Send celebration image with reply keyboard (to update keyboard)
                     success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
-                    bot.send_photo(buyerid, success_photo, caption=buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                    bot.send_photo(buyerid, success_photo, reply_markup=otp_keyboard)
                 except Exception as e:
                     logger.error(f"Error notifying buyer: {e}")
-                    # Fallback to text only
-                    try:
-                        bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                    except:
-                        pass
                 
                 # Notify admin with Canva account info
                 admins = GetDataFromDB.GetAdminIDsInDB() or []
