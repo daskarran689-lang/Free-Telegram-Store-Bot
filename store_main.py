@@ -304,8 +304,8 @@ def casso_webhook():
                     
                     promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI MUA 1 TẶNG 1!*\n"
                     promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    promo_msg += f"🎯 Suất khuyến mãi: {slot_display}\n"
-                    promo_msg += f"📩 Inbox Admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
+                    promo_msg += f"🎯 Suất khuyến mãi: slot {slot_display}\n"
+                    promo_msg += f"📩 Inbox Admin kèm mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
                 
                 buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
                 try:
@@ -526,8 +526,8 @@ def callback_query(call):
                                 
                                 promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI MUA 1 TẶNG 1!*\n"
                                 promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                                promo_msg += f"🎯 Suất khuyến mãi: {slot_display}\n"
-                                promo_msg += f"📩 Inbox Admin kèm Mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
+                                promo_msg += f"🎯 Suất khuyến mãi: slot {slot_display}\n"
+                                promo_msg += f"📩 Inbox Admin kèm mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
                         
                         buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
                         
