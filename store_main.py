@@ -2167,7 +2167,21 @@ def MyOrdersList(message):
                 except:
                     price_num = productprice
                 msg = get_text("order_info", lang, productname, ordernumber, orderdate, price_num, store_currency, status, productkeys)
-                bot.send_message(id, text=f"{msg}", parse_mode="Markdown")
+                
+                # Create inline buttons for each email in productkeys
+                inline_kb = types.InlineKeyboardMarkup()
+                if productkeys and productkeys != "NIL":
+                    emails = [e.strip() for e in productkeys.replace('\n', ',').split(',') if '@' in e.strip()]
+                    for email in emails:
+                        inline_kb.add(types.InlineKeyboardButton(
+                            text=f"🔑 Lấy OTP: {email[:20]}..." if len(email) > 20 else f"🔑 Lấy OTP: {email}",
+                            callback_data=f"otp_{email}"
+                        ))
+                
+                if inline_kb.keyboard:
+                    bot.send_message(id, text=f"{msg}", reply_markup=inline_kb, parse_mode="Markdown")
+                else:
+                    bot.send_message(id, text=f"{msg}", parse_mode="Markdown")
         bot.send_message(id, get_text("list_completed", lang), reply_markup=create_main_keyboard(lang, id))
 
 # Check if message matches support button
