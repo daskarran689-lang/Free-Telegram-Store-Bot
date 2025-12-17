@@ -18,22 +18,43 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     # Use PostgreSQL with psycopg3
     import psycopg
     from psycopg import OperationalError
+    from psycopg_pool import ConnectionPool
     
     USE_POSTGRES = True
     logger.info("Using PostgreSQL database")
     
+    # Connection pool for better performance
+    try:
+        _pool = ConnectionPool(
+            DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            timeout=10,
+            kwargs={"autocommit": True, "options": "-c statement_timeout=10000"}
+        )
+        logger.info("Connection pool created")
+    except Exception as e:
+        logger.warning(f"Pool creation failed, using single connections: {e}")
+        _pool = None
+    
     @contextmanager
     def get_db_connection():
-        """Context manager for PostgreSQL - creates new connection each time"""
+        """Context manager for PostgreSQL - uses pool or creates new connection"""
         conn = None
         try:
-            conn = psycopg.connect(
-                DATABASE_URL, 
-                connect_timeout=10,
-                options="-c statement_timeout=15000",  # 15 second timeout
-                autocommit=True
-            )
-            yield conn
+            if _pool:
+                conn = _pool.getconn()
+                yield conn
+                _pool.putconn(conn)
+                conn = None  # Don't close pooled connection
+            else:
+                conn = psycopg.connect(
+                    DATABASE_URL, 
+                    connect_timeout=5,
+                    options="-c statement_timeout=10000",
+                    autocommit=True
+                )
+                yield conn
         except Exception as e:
             logger.error(f"Database connection error: {e}")
             raise
@@ -43,10 +64,12 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     
     # For backward compatibility - create initial connection
     def get_connection():
+        if _pool:
+            return _pool.getconn()
         return psycopg.connect(
             DATABASE_URL, 
-            connect_timeout=10,
-            options="-c statement_timeout=15000",
+            connect_timeout=5,
+            options="-c statement_timeout=10000",
             autocommit=True
         )
     

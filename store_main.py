@@ -338,20 +338,31 @@ def get_payment_api_key():
 BASE_CURRENCY = store_currency
 
 
+# Cache for user purchase status (expires after 5 minutes)
+_user_purchase_cache = {}
+_cache_ttl = 300  # 5 minutes
+
 # Create main reply keyboard (buttons at bottom - always visible)
-def create_main_keyboard(lang="vi", user_id=None):
+def create_main_keyboard(lang="vi", user_id=None, skip_db_check=False):
     """Create the main user keyboard. If user has purchased, show OTP button."""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(types.KeyboardButton(text="🛒 Mua ngay"))
     
-    # Check if user has purchased (has Canva accounts)
+    # Check if user has purchased (with caching)
     has_purchased = False
-    if user_id:
-        try:
-            accounts = CanvaAccountDB.get_buyer_accounts(user_id)
-            has_purchased = accounts and len(accounts) > 0
-        except:
-            pass
+    if user_id and not skip_db_check:
+        import time as time_cache
+        cache_key = str(user_id)
+        cached = _user_purchase_cache.get(cache_key)
+        if cached and (time_cache.time() - cached['time']) < _cache_ttl:
+            has_purchased = cached['value']
+        else:
+            try:
+                accounts = CanvaAccountDB.get_buyer_accounts(user_id)
+                has_purchased = accounts and len(accounts) > 0
+                _user_purchase_cache[cache_key] = {'value': has_purchased, 'time': time_cache.time()}
+            except:
+                pass
     
     if has_purchased:
         keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
@@ -549,85 +560,56 @@ def is_home_button(text):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     try:
-
         id = message.from_user.id
         lang = get_user_lang(id)
-        try:
-            usname = message.chat.username
-            admins = GetDataFromDB.GetAdminIDsInDB() or []
-            user_s = GetDataFromDB.AllUsers() or []
-            all_user_s = 0
-            for a_user_s in user_s:
-                all_user_s = a_user_s[0] if a_user_s else 0
-            admin_s = GetDataFromDB.AllAdmins() or []
-            all_admin_s = 0
-            for a_admin_s in admin_s:
-                all_admin_s = a_admin_s[0] if a_admin_s else 0
-            product_s = GetDataFromDB.AllProducts() or []
-            all_product_s = 0
-            for a_product_s in product_s:
-                all_product_s = a_product_s[0] if a_product_s else 0
-            orders_s = GetDataFromDB.AllOrders() or []
-            all_orders_s = 0
-            for a_orders_s in orders_s:
-                all_orders_s = a_orders_s[0] if a_orders_s else 0
+        usname = message.chat.username or "user"
+        
+        # Check admin first (fast - uses cached env var)
+        user_is_admin = is_admin(id)
+        
+        if user_is_admin:
+            # Admin panel - load stats only for admin
+            try:
+                user_s = GetDataFromDB.AllUsers() or []
+                all_user_s = user_s[0][0] if user_s and user_s[0] else 0
+                admin_s = GetDataFromDB.AllAdmins() or []
+                all_admin_s = admin_s[0][0] if admin_s and admin_s[0] else 0
+                product_s = GetDataFromDB.AllProducts() or []
+                all_product_s = product_s[0][0] if product_s and product_s[0] else 0
+                orders_s = GetDataFromDB.AllOrders() or []
+                all_orders_s = orders_s[0][0] if orders_s and orders_s[0] else 0
+            except:
+                all_user_s = all_admin_s = all_product_s = all_orders_s = 0
+            
+            # Ensure admin is in database
+            CreateDatas.AddAuser(id, usname)
+            CreateDatas.AddAdmin(id, usname)
             
             keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
             keyboardadmin.row_width = 2
-            
-            # Check if user is admin (from env or database)
-            user_is_admin = is_admin(id)
-            
-            # If no admins exist and no env admin, make first user admin
-            if admins == [] and not default_admin_id:
-                users = GetDataFromDB.GetUserIDsInDB()
-                if f"{id}" not in f"{users}":
-                    CreateDatas.AddAuser(id, usname)
-                CreateDatas.AddAdmin(id, usname)
-                user_is_admin = True
-            
-            if user_is_admin:
-                # Add user to database if not exists
-                users = GetDataFromDB.GetUserIDsInDB() or []
-                user_ids = [str(u[0]) for u in users] if users else []
-                if str(id) not in user_ids:
-                    CreateDatas.AddAuser(id, usname)
-                
-                # Add to admin table if not exists (for env admin)
-                admin_ids = [str(a[0]) for a in admins] if admins else []
-                if str(id) not in admin_ids:
-                    CreateDatas.AddAdmin(id, usname)
-                
-                key0 = types.KeyboardButton(text=get_text("manage_products", lang))
-                key1 = types.KeyboardButton(text=get_text("manage_categories", lang))
-                key2 = types.KeyboardButton(text=get_text("manage_orders", lang))
-                key3 = types.KeyboardButton(text=get_text("payment_methods", lang))
-                key4 = types.KeyboardButton(text=get_text("news_to_users", lang))
-                key5 = types.KeyboardButton(text=get_text("switch_to_user", lang))
-                keyboardadmin.add(key0)
-                keyboardadmin.add(key1, key2)
-                keyboardadmin.add(key3, key4)
-                keyboardadmin.add(key5)
+            key0 = types.KeyboardButton(text=get_text("manage_products", lang))
+            key1 = types.KeyboardButton(text=get_text("manage_categories", lang))
+            key2 = types.KeyboardButton(text=get_text("manage_orders", lang))
+            key3 = types.KeyboardButton(text=get_text("payment_methods", lang))
+            key4 = types.KeyboardButton(text=get_text("news_to_users", lang))
+            key5 = types.KeyboardButton(text=get_text("switch_to_user", lang))
+            keyboardadmin.add(key0)
+            keyboardadmin.add(key1, key2)
+            keyboardadmin.add(key3, key4)
+            keyboardadmin.add(key5)
 
-                store_statistics = f"{get_text('store_statistics', lang)}\n\n\n{get_text('total_users', lang)}: {all_user_s}\n\n{get_text('total_admins', lang)}: {all_admin_s}\n\n{get_text('total_products', lang)}: {all_product_s}\n\n{get_text('total_orders', lang)}: {all_orders_s}\n\n\n➖➖➖➖➖➖➖➖➖➖➖➖➖"
-                bot.send_message(message.chat.id, f"{get_text('welcome_admin', lang)}\n\n{store_statistics}", reply_markup=keyboardadmin, parse_mode='Markdown')
-
-            else:
-                users = GetDataFromDB.GetUserIDsInDB()
-                if f"{id}" not in f"{users}":
-                    CreateDatas.AddAuser(id,usname)
-                user_data = GetDataFromDB.GetUserWalletInDB(id)
-                welcome_msg = get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
-                try:
-                    bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="HTML")
-                except Exception as img_err:
-                    logger.warning(f"Failed to send welcome image: {img_err}")
-                    bot.send_message(message.chat.id, welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
-        except Exception as e:
-            print(e)
-            admin_switch_user(message)
+            store_statistics = f"{get_text('store_statistics', lang)}\n\n{get_text('total_users', lang)}: {all_user_s}\n{get_text('total_admins', lang)}: {all_admin_s}\n{get_text('total_products', lang)}: {all_product_s}\n{get_text('total_orders', lang)}: {all_orders_s}"
+            bot.send_message(message.chat.id, f"{get_text('welcome_admin', lang)}\n\n{store_statistics}", reply_markup=keyboardadmin, parse_mode='Markdown')
+        else:
+            # Customer - minimal DB calls
+            CreateDatas.AddAuser(id, usname)
+            welcome_msg = get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
+            try:
+                bot.send_photo(message.chat.id, "https://files.catbox.moe/5e0zq7.png", caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="HTML")
+            except:
+                bot.send_message(message.chat.id, welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
     except Exception as e:
-        print(e)
+        logger.error(f"Error in send_welcome: {e}")
         
 # Check if message matches switch to user button
 def is_switch_user_button(text):
