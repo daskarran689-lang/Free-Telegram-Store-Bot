@@ -717,7 +717,6 @@ class GetDataFromDB:
             )
             return result[0] if result else None
         except Exception as e:
-        except Exception as e:
             logger.error(f"Error getting product number: {e}")
             return None
 
