@@ -535,6 +535,14 @@ def callback_query(call):
                         inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã xác thực cho {productkeys}", callback_data=f"otp_{productkeys}"))
                         bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
                         
+                        # Send celebration image with reply keyboard
+                        otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                        otp_keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
+                        otp_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+                        otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+                        success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
+                        bot.send_photo(buyerid, success_photo, reply_markup=otp_keyboard)
+                        
                         bot.answer_callback_query(call.id, get_text("order_confirmed", lang, ordernumber))
                         bot.edit_message_text(f"✅ Order {ordernumber} confirmed!", call.message.chat.id, call.message.message_id)
                 else:
