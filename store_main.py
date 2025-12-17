@@ -673,13 +673,14 @@ def ManageProducts(message):
         key1 = types.KeyboardButton(text=get_text("add_product", lang))
         key2 = types.KeyboardButton(text=get_text("restock_product", lang))
         key3 = types.KeyboardButton(text=get_text("list_product", lang))
-        key4 = types.KeyboardButton(text=get_text("delete_product", lang))
-        key5 = types.KeyboardButton(text="📧 Quản lý tài khoản Canva")
-        key6 = types.KeyboardButton(text=get_text("home", lang))
+        key4 = types.KeyboardButton(text="✏️ Sửa sản phẩm")
+        key5 = types.KeyboardButton(text=get_text("delete_product", lang))
+        key6 = types.KeyboardButton(text="📧 Quản lý tài khoản Canva")
+        key7 = types.KeyboardButton(text=get_text("home", lang))
         keyboardadmin.add(key1, key2)
         keyboardadmin.add(key3, key4)
-        keyboardadmin.add(key5)
-        keyboardadmin.add(key6)
+        keyboardadmin.add(key5, key6)
+        keyboardadmin.add(key7)
         
         # Show Canva account stats
         canva_count = CanvaAccountDB.get_account_count()
@@ -979,7 +980,9 @@ def add_a_product_price(message):
     
     if is_admin(id):
         try:
-            price = message.text
+            # Remove commas, dots, spaces and convert to number
+            price_text = message.text.replace(',', '').replace('.', '').replace(' ', '').strip()
+            price = int(price_text)
             msg = bot.send_message(id, get_text("attach_product_photo", lang))
             CreateDatas.UpdateProductPrice(price, productnumbers)
             bot.register_next_step_handler(msg, add_a_product_photo_link)
@@ -1370,6 +1373,160 @@ def delete_a_product(message):
     else:
         msg = bot.send_message(id, get_text("error_404", lang))
         bot.register_next_step_handler(msg, delete_a_product)
+
+# ============== EDIT PRODUCT ==============
+# Check if message matches edit product button
+def is_edit_product_button(text):
+    return "Sửa sản phẩm" in text or "✏️ Sửa sản phẩm" in text
+
+@bot.message_handler(content_types=["text"], func=lambda message: is_edit_product_button(message.text))
+def edit_product_menu(message):
+    """Admin: Show list of products to edit"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    products = GetDataFromDB.GetProductNumberName()
+    if not products:
+        bot.send_message(id, "📭 Chưa có sản phẩm nào", reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    bot.send_message(id, "📝 *Chọn sản phẩm cần sửa:*", parse_mode="Markdown")
+    for pid, title in products:
+        bot.send_message(id, f"/{pid} - `{title}`", parse_mode="Markdown")
+    msg = bot.send_message(id, "👆 Bấm vào mã sản phẩm để sửa:")
+    bot.register_next_step_handler(msg, select_product_to_edit)
+
+def select_product_to_edit(message):
+    """Select which product to edit"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        return
+    
+    try:
+        product_id = message.text.replace("/", "").strip()
+        product_name = GetDataFromDB.GetProductName(product_id)
+        
+        if not product_name:
+            bot.send_message(id, "❌ Không tìm thấy sản phẩm", reply_markup=create_main_keyboard(lang, id))
+            return
+        
+        # Store product ID for editing
+        global edit_product_id
+        edit_product_id = product_id
+        
+        # Show edit options
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard.row(types.KeyboardButton(text="📝 Sửa tên"))
+        keyboard.row(types.KeyboardButton(text="📄 Sửa mô tả"))
+        keyboard.row(types.KeyboardButton(text="💰 Sửa giá"))
+        keyboard.row(types.KeyboardButton(text="🖼 Sửa ảnh"))
+        keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+        
+        # Get current product info
+        price = GetDataFromDB.GetProductPrice(product_id)
+        desc = GetDataFromDB.GetProductDescription(product_id)
+        qty = GetDataFromDB.GetProductQuantity(product_id)
+        
+        info = f"✏️ *Sửa sản phẩm:* `{product_name}`\n"
+        info += f"━━━━━━━━━━━━━━━━━━━━\n"
+        info += f"🆔 Mã: `{product_id}`\n"
+        info += f"💰 Giá: {price:,} VND\n"
+        info += f"📦 Tồn kho: {qty}\n"
+        info += f"📄 Mô tả: {desc[:50]}...\n"
+        info += f"━━━━━━━━━━━━━━━━━━━━\n"
+        info += "👇 Chọn thông tin cần sửa:"
+        
+        bot.send_message(id, info, reply_markup=keyboard, parse_mode="Markdown")
+    except Exception as e:
+        print(e)
+        bot.send_message(id, "❌ Lỗi, vui lòng thử lại", reply_markup=create_main_keyboard(lang, id))
+
+# Edit product name
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "📝 Sửa tên")
+def edit_product_name_prompt(message):
+    id = message.from_user.id
+    if not is_admin(id):
+        return
+    msg = bot.send_message(id, "📝 Nhập tên mới cho sản phẩm:")
+    bot.register_next_step_handler(msg, save_product_name)
+
+def save_product_name(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    try:
+        new_name = message.text.strip()
+        CreateDatas.UpdateProductName(new_name, edit_product_id)
+        bot.send_message(id, f"✅ Đã cập nhật tên: *{new_name}*", parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
+    except Exception as e:
+        print(e)
+        bot.send_message(id, "❌ Lỗi khi cập nhật", reply_markup=create_main_keyboard(lang, id))
+
+# Edit product description
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "📄 Sửa mô tả")
+def edit_product_desc_prompt(message):
+    id = message.from_user.id
+    if not is_admin(id):
+        return
+    msg = bot.send_message(id, "📄 Nhập mô tả mới cho sản phẩm:")
+    bot.register_next_step_handler(msg, save_product_desc)
+
+def save_product_desc(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    try:
+        new_desc = message.text.strip()
+        CreateDatas.UpdateProductDescription(new_desc, edit_product_id)
+        bot.send_message(id, f"✅ Đã cập nhật mô tả!", reply_markup=create_main_keyboard(lang, id))
+    except Exception as e:
+        print(e)
+        bot.send_message(id, "❌ Lỗi khi cập nhật", reply_markup=create_main_keyboard(lang, id))
+
+# Edit product price
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "💰 Sửa giá")
+def edit_product_price_prompt(message):
+    id = message.from_user.id
+    if not is_admin(id):
+        return
+    msg = bot.send_message(id, "💰 Nhập giá mới (VD: 40000 hoặc 40,000):")
+    bot.register_next_step_handler(msg, save_product_price)
+
+def save_product_price(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    try:
+        price_text = message.text.replace(',', '').replace('.', '').replace(' ', '').strip()
+        new_price = int(price_text)
+        CreateDatas.UpdateProductPrice(new_price, edit_product_id)
+        bot.send_message(id, f"✅ Đã cập nhật giá: *{new_price:,} VND*", parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
+    except Exception as e:
+        print(e)
+        bot.send_message(id, "❌ Lỗi khi cập nhật. Vui lòng nhập số hợp lệ.", reply_markup=create_main_keyboard(lang, id))
+
+# Edit product image
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "🖼 Sửa ảnh")
+def edit_product_image_prompt(message):
+    id = message.from_user.id
+    if not is_admin(id):
+        return
+    msg = bot.send_message(id, "🖼 Gửi link ảnh mới cho sản phẩm:")
+    bot.register_next_step_handler(msg, save_product_image)
+
+def save_product_image(message):
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    try:
+        new_image = message.text.strip()
+        CreateDatas.UpdateProductproductimagelink(new_image, edit_product_id)
+        bot.send_message(id, f"✅ Đã cập nhật ảnh sản phẩm!", reply_markup=create_main_keyboard(lang, id))
+    except Exception as e:
+        print(e)
+        bot.send_message(id, "❌ Lỗi khi cập nhật", reply_markup=create_main_keyboard(lang, id))
 
 # Check if message matches shop items button
 def is_shop_items_button(text):
