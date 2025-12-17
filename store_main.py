@@ -2873,15 +2873,11 @@ def ListOrders(message):
                 bot.send_message(id, "📭 Chưa có đơn hàng nào trong cửa hàng")
             else:
                 bot.send_message(id, "📋 *DANH SÁCH ĐƠN HÀNG*", parse_mode="Markdown")
+                bot.send_message(id, "👇 Mã đơn hàng - Tên sản phẩm - Khách - Ngày mua 👇")
                 for ordernumber, productname, buyerusername, orderdate in all_orders:
                     import time
                     time.sleep(0.3)
-                    order_msg = f"━━━━━━━━━━━━━━━━━━━━\n"
-                    order_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                    order_msg += f"📦 Sản phẩm: {productname}\n"
-                    order_msg += f"👤 Khách: @{buyerusername}\n"
-                    order_msg += f"📅 Ngày mua: {orderdate}"
-                    bot.send_message(id, order_msg, parse_mode="Markdown")
+                    bot.send_message(id, f"`{ordernumber}` - {productname} - @{buyerusername} - {orderdate}", parse_mode="Markdown")
             key1 = types.KeyboardButton(text=get_text("list_orders", lang))
             key2 = types.KeyboardButton(text=get_text("delete_order", lang))
             key3 = types.KeyboardButton(text=get_text("home", lang))
