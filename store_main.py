@@ -2784,22 +2784,37 @@ def message_all_users(message):
             input_message = message.text
             all_users = GetDataFromDB.GetUsersInfo()
             if all_users ==  []:
-                msg = bot.send_message(id, "No user available in your store, /start", reply_markup=keyboardadmin)
+                msg = bot.send_message(id, "Chưa có người dùng nào trong cửa hàng, /start", reply_markup=keyboardadmin)
             else:
-                bot.send_message(id, "Now Broadcasting Message To All Users: ✅")
+                bot.send_message(id, "📢 Đang gửi thông báo đến tất cả người dùng...")
+                success_list = []
+                blocked_list = []
+                other_fail_list = []
                 for uid, uname, uwallet in all_users:
                     try:
                         bot.send_message(uid, f"{input_message}")
-                        bot.send_message(id, f"Message successfully sent ✅ To: @`{uname}`")
-                        time.sleep(0.5)
-                    except:
-                        bot.send_message(id, f"User @{uid} has blocked the bot - {uname} ")
-                bot.send_message(id, f"Broadcast Completed ✅", reply_markup=keyboardadmin)
+                        success_list.append(f"@{uname}")
+                        time.sleep(0.3)
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if "blocked" in error_msg or "deactivated" in error_msg or "bot was blocked" in error_msg:
+                            blocked_list.append(f"@{uname}")
+                        else:
+                            other_fail_list.append(f"@{uname}")
+                
+                result_msg = f"✅ Hoàn tất!\n\n📊 Đã gửi: {len(success_list)}/{len(all_users)} người dùng"
+                if success_list:
+                    result_msg += f"\n\n✅ Thành công:\n" + ", ".join(success_list)
+                if blocked_list:
+                    result_msg += f"\n\n🚫 Đã chặn bot ({len(blocked_list)}):\n" + ", ".join(blocked_list)
+                if other_fail_list:
+                    result_msg += f"\n\n⚠️ Lỗi khác ({len(other_fail_list)}):\n" + ", ".join(other_fail_list)
+                bot.send_message(id, result_msg, reply_markup=keyboardadmin)
         except Exception as e:
             print(e)
-            bot.send_message(id, "Error 404 🚫, try again with corrected input.")
+            bot.send_message(id, "❌ Lỗi, vui lòng thử lại!")
     else:
-        bot.send_message(id, "⚠️ Only Admin can use this command !!!", reply_markup=keyboard)
+        bot.send_message(id, "⚠️ Chỉ admin mới có quyền sử dụng!", reply_markup=keyboard)
 
 
 # Check if message matches manage orders button
