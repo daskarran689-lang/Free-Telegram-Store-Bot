@@ -772,7 +772,7 @@ def manage_promotion(message):
     
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     if promo_info and promo_info["is_active"]:
-        keyboard.row(types.KeyboardButton(text="� TẮT  khuyến mãi"))
+        keyboard.row(types.KeyboardButton(text="🔴 TẮT khuyến mãi"))
     else:
         keyboard.row(types.KeyboardButton(text="🟢 BẬT khuyến mãi"))
     keyboard.row(types.KeyboardButton(text="⚙️ Đặt số slot khuyến mãi"))
