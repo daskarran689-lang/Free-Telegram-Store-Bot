@@ -825,12 +825,18 @@ def manage_users(message):
             created_str = str(created_at)[:10] if created_at else "N/A"
         else:
             created_str = "N/A"
-        # Hiển thị đúng format
+        # Hiển thị đúng format - escape ký tự Markdown
         display = get_user_display_name_from_data(uname, uid)
-        msg += f"{i}. {display}\n"
+        safe_display = display.replace("_", "\\_").replace("*", "\\*")
+        msg += f"{i}. {safe_display}\n"
         msg += f"   📅 Tham gia: {created_str}\n"
     
-    bot.send_message(id, msg, reply_markup=keyboard, parse_mode="Markdown")
+    try:
+        bot.send_message(id, msg, reply_markup=keyboard, parse_mode="Markdown")
+    except:
+        # Fallback không dùng Markdown
+        msg_plain = msg.replace("*", "")
+        bot.send_message(id, msg_plain, reply_markup=keyboard)
 
 # Check if message matches manage promotion button
 def is_manage_promotion_button(text):

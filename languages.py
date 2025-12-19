@@ -33,7 +33,7 @@ LANGUAGES = {
         "add_bitcoin_secret": "Add Bitcoin Secret ➕",
         
         # Messages - Welcome
-        "welcome_admin": "👋 *Welcome Admin!*\n━━━━━━━━━━━━━━━━━━━━\n_Ready to manage your store_",
+        "welcome_admin": "👋 *Welcome Admin!*\n━━━━━━━━━━━━━━\nReady to manage your store",
         "welcome_customer": "👋 *Hello* {username}!\nWelcome to\n━━━━━━━━━━━━━━\n🎨 *CANVA EDU ADMIN SHOP*\n━━━━━━━━━━━━━━\n\n💳 Buy automatically 24/7\n📦 View order history easily\n💬 Support: @dlndai\n\n📖 Type /help to see commands\n👇 Or press button below to start",
         "wallet_balance": "Your Wallet Balance: $",
         
@@ -46,8 +46,8 @@ LANGUAGES = {
         
         # Messages - General
         "choose_action": "Choose an action to perform ✅",
-        "admin_only": "⚠️ *Admin Only*\n_This command is restricted to administrators_",
-        "error_404": "❌ *Error 404*\n_Please try again with correct input_",
+        "admin_only": "⚠️ *Admin Only*\nThis command is restricted to administrators",
+        "error_404": "❌ *Error 404*\nPlease try again with correct input",
         "success": "Successfully ✅",
         "deleted": "Deleted successfully 🗑️",
         "list_completed": "List completed ✅",
@@ -70,7 +70,7 @@ LANGUAGES = {
         "attach_keys_file": "Đính kèm file chứa tài khoản Canva (.txt): ✅\n\n⚠️ Mỗi tài khoản 1 dòng (email:password)\n\n⚠️ Trả lời Skip nếu không có",
         "reply_download_link": "Nhập link hướng dẫn sử dụng Canva (nếu có):\n\n⚠️ Trả lời Skip để bỏ qua",
         "download_skipped": "Download Link Skipped ✅",
-        "product_added": "✅ *Product Added!*\n━━━━━━━━━━━━━━━━━━━━\n_What would you like to do next?_",
+        "product_added": "✅ *Product Added!*\n━━━━━━━━━━━━━━\nWhat would you like to do next?",
         "no_product": "No product available, please send /start command to start creating products",
         "product_id_name": "👇Product ID --- Product Name👇",
         "click_product_delete": "Click on a Product ID of the product you want to delete: ✅",
@@ -201,7 +201,7 @@ LANGUAGES = {
         "add_bitcoin_secret": "Thêm Bitcoin Secret ➕",
         
         # Messages - Welcome
-        "welcome_admin": "👋 *Xin chào Admin!*\n━━━━━━━━━━━━━━━━━━━━\n_Sẵn sàng quản lý cửa hàng_",
+        "welcome_admin": "👋 *Xin chào Admin!*\n━━━━━━━━━━━━━━\nSẵn sàng quản lý cửa hàng",
         "welcome_customer": "👋 *Xin chào* {username}!\nChào mừng đến với\n━━━━━━━━━━━━━━\n🎨 *CANVA EDU ADMIN SHOP*\n━━━━━━━━━━━━━━\n\n💳 Mua hàng tự động 24/7\n📦 Xem lịch sử đơn dễ dàng\n💬 Hỗ trợ: @dlndai\n\n📖 Gõ /help để xem các lệnh của bot\n👇 Hoặc bấm nút bên dưới để bắt đầu",
         "wallet_balance": "Số dư ví: $",
         
@@ -214,8 +214,8 @@ LANGUAGES = {
         
         # Messages - General
         "choose_action": "Chọn hành động để thực hiện ✅",
-        "admin_only": "⚠️ *Chỉ Admin*\n_Lệnh này chỉ dành cho quản trị viên_",
-        "error_404": "❌ *Lỗi 404*\n_Vui lòng thử lại với dữ liệu đúng_",
+        "admin_only": "⚠️ *Chỉ Admin*\nLệnh này chỉ dành cho quản trị viên",
+        "error_404": "❌ *Lỗi 404*\nVui lòng thử lại với dữ liệu đúng",
         "success": "Thành công ✅",
         "deleted": "Đã xóa thành công 🗑️",
         "list_completed": "Danh sách hoàn tất ✅",
@@ -238,7 +238,7 @@ LANGUAGES = {
         "attach_keys_file": "Đính kèm file chứa tài khoản Canva (.txt): ✅\n\n⚠️ Mỗi tài khoản 1 dòng (email:password)\n\n⚠️ Trả lời Skip nếu không có",
         "reply_download_link": "Nhập link hướng dẫn sử dụng Canva (nếu có):\n\n⚠️ Trả lời Skip để bỏ qua",
         "download_skipped": "Đã bỏ qua Link tải xuống ✅",
-        "product_added": "✅ *Đã thêm sản phẩm!*\n━━━━━━━━━━━━━━━━━━━━\n_Bạn muốn làm gì tiếp theo?_",
+        "product_added": "✅ *Đã thêm sản phẩm!*\n━━━━━━━━━━━━━━\nBạn muốn làm gì tiếp theo?",
         "no_product": "Không có sản phẩm, vui lòng gửi lệnh /start để bắt đầu tạo sản phẩm",
         "product_id_name": "👇Mã SP --- Tên sản phẩm👇",
         "click_product_delete": "Nhấn vào Mã sản phẩm bạn muốn xóa: ✅",
