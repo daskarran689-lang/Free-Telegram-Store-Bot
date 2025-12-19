@@ -82,7 +82,8 @@ try:
         types.BotCommand("menu", "Về trang chủ"),
         types.BotCommand("buy", "Mua hàng"),
         types.BotCommand("orders", "Xem đơn hàng"),
-        types.BotCommand("support", "Hỗ trợ")
+        types.BotCommand("support", "Hỗ trợ"),
+        types.BotCommand("help", "Xem hướng dẫn")
     ]
     bot.set_my_commands(commands)
     logger.info("Bot commands menu set successfully")
@@ -768,7 +769,7 @@ def send_welcome(message):
             if promo_info and promo_info["is_active"]:
                 remaining = promo_info["max_count"] - promo_info["sold_count"]
                 if remaining > 0:
-                    promo_banner = f"🎉 *ĐANG CÓ KHUYẾN MÃI MUA 1 TẶNG 1!*\n🎁 Còn lại {remaining} slot\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                    promo_banner = f"🎉 *ĐANG CÓ KHUYẾN MÃI MUA 1 TẶNG 1!*\n🎁 Còn lại {remaining} slot\n━━━━━━━━━━━━━━\n\n"
             
             welcome_msg = promo_banner + get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
             # Send welcome with photo (using Telegram file_id for speed)
@@ -2204,6 +2205,24 @@ def support_command(message):
     support_msg += "━━━━━━━━━━━━━━━━━━━━\n"
     support_msg += "_Gửi tin nhắn trực tiếp để được hỗ trợ_"
     bot.send_message(id, support_msg, parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Show help/commands info"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    help_msg = "📖 *HƯỚNG DẪN SỬ DỤNG BOT*\n"
+    help_msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
+    help_msg += "📌 *Các lệnh có sẵn:*\n"
+    help_msg += "/start - Khởi động bot\n"
+    help_msg += "/menu - Về trang chủ\n"
+    help_msg += "/buy - Mua hàng\n"
+    help_msg += "/orders - Xem đơn hàng\n"
+    help_msg += "/support - Liên hệ hỗ trợ\n"
+    help_msg += "/help - Xem hướng dẫn này\n\n"
+    help_msg += "━━━━━━━━━━━━━━━━━━━━\n"
+    help_msg += "👇 Hoặc bấm nút bên dưới để thao tác"
+    bot.send_message(id, help_msg, parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
 
 
 # Store pending QR message IDs to delete after payment confirmed
