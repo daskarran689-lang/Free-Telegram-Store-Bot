@@ -345,21 +345,32 @@ def casso_webhook():
                 except Exception as e:
                     logger.error(f"Error notifying buyer: {e}")
                 
-                # Notify admin with Canva account info
-                admins = GetDataFromDB.GetAdminIDsInDB() or []
-                for admin in admins:
-                    try:
-                        admin_msg = f"✅ *Đơn hàng đã thanh toán thành công!*\n"
-                        admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                        admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                        admin_msg += f"👤 Khách: @{buyerusername}\n"
-                        admin_msg += f"📦 Sản phẩm: {productname}\n"
-                        admin_msg += f"💰 Số tiền: {amount:,} VND\n"
-                        admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                        admin_msg += f"🔑 *Tài khoản đã cấp:*\n`{productkeys}`"
-                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
-                    except:
-                        pass
+                # Edit admin notification message (instead of sending new)
+                admin_msg = f"✅ *Đơn hàng đã thanh toán thành công!*\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{buyerusername}\n"
+                admin_msg += f"📦 Sản phẩm: {productname}\n"
+                admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🔑 *Tài khoản đã cấp:*\n`{productkeys}`"
+                
+                # Try to edit existing admin messages
+                if ordernumber in pending_admin_messages:
+                    for msg_info in pending_admin_messages[ordernumber]:
+                        try:
+                            bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown")
+                        except:
+                            pass
+                    del pending_admin_messages[ordernumber]
+                else:
+                    # Fallback: send new message if no saved message
+                    admins = GetDataFromDB.GetAdminIDsInDB() or []
+                    for admin in admins:
+                        try:
+                            bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                        except:
+                            pass
                 
                 logger.info(f"Order {ordernumber} auto-confirmed!")
         
@@ -581,19 +592,30 @@ def callback_query(call):
                 if ordernumber in pending_qr_messages:
                     del pending_qr_messages[ordernumber]
                 
-                # Notify admin about cancelled order
-                admins = GetDataFromDB.GetAdminIDsInDB() or []
-                for admin in admins:
-                    try:
-                        admin_msg = f"❌ *Đơn hàng đã bị hủy*\n"
-                        admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                        admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                        admin_msg += f"👤 Khách: @{cancelled_username}\n"
-                        admin_msg += f"📦 Sản phẩm: {cancelled_product}\n"
-                        admin_msg += f"💰 Số tiền: {cancelled_amount:,} VND"
-                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
-                    except:
-                        pass
+                # Edit admin notification message (instead of sending new)
+                admin_msg = f"❌ *Đơn hàng đã bị hủy*\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{cancelled_username}\n"
+                admin_msg += f"📦 Sản phẩm: {cancelled_product}\n"
+                admin_msg += f"💰 Số tiền: {cancelled_amount:,} VND"
+                
+                # Try to edit existing admin messages
+                if ordernumber in pending_admin_messages:
+                    for msg_info in pending_admin_messages[ordernumber]:
+                        try:
+                            bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown")
+                        except:
+                            pass
+                    del pending_admin_messages[ordernumber]
+                else:
+                    # Fallback: send new message if no saved message
+                    admins = GetDataFromDB.GetAdminIDsInDB() or []
+                    for admin in admins:
+                        try:
+                            bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                        except:
+                            pass
                 
                 bot.answer_callback_query(call.id, get_text("order_cancelled", lang, ordernumber))
                 bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -2163,6 +2185,8 @@ def support_command(message):
 pending_qr_messages = {}
 # Store pending order quantities
 pending_order_quantities = {}
+# Store admin notification message IDs to edit later
+pending_admin_messages = {}
 # Store pending order info (not saved to DB until payment confirmed)
 # Format: {ordernumber: {user_id, username, product_name, price, quantity, product_number, orderdate}}
 pending_orders_info = {}
@@ -2283,18 +2307,22 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         
         # Notify admin about new pending order
         admins = GetDataFromDB.GetAdminIDsInDB() or []
+        admin_msg_ids = []
         for admin in admins:
             try:
                 admin_msg = f"🛒 *Đơn hàng mới đang chờ thanh toán*\n"
                 admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                admin_msg += f"👤 Khách: @{username}\n"
-                admin_msg += f"📦 Sản phẩm: {product_name_with_qty}\n"
+                admin_msg += f"� Khnách: @{username}\n"
+                admin_msg += f"� Sốản phẩm: {product_name_with_qty}\n"
                 admin_msg += f"💰 Số tiền: {amount:,} VND\n"
                 admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
-                bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                admin_msg_ids.append({"chat_id": admin[0], "message_id": sent.message_id})
             except:
                 pass
+        # Save admin message IDs to edit later
+        pending_admin_messages[ordernumber] = admin_msg_ids
         
         # Generate VietQR
         qr_url = generate_vietqr_url(
