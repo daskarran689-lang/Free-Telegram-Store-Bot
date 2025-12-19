@@ -2340,6 +2340,7 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
                 admin_msg += f"👤 Khách: @{username}\n"
                 admin_msg += f"📦 Sản phẩm: {product_name_with_qty}\n"
+                admin_msg += f"💰 Số tiền: {amount:,} VND\n"
                 admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
                 sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
                 admin_msg_ids.append({"chat_id": admin[0], "message_id": sent.message_id})
