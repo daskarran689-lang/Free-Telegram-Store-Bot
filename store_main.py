@@ -101,12 +101,28 @@ def is_admin(user_id):
     admin_ids = [str(admin[0]) for admin in admins]
     return str(user_id) in admin_ids
 
+# Hàm lấy display name cho user
+def get_user_display_name(message):
+    """Lấy tên hiển thị: @username nếu có, hoặc first_name - user_id"""
+    if message.from_user.username:
+        return f"@{message.from_user.username}"
+    else:
+        first_name = message.from_user.first_name or "User"
+        return f"{first_name} - {message.from_user.id}"
+
+def get_user_display_name_from_data(username, user_id):
+    """Lấy tên hiển thị từ data: @username nếu có, hoặc user_id"""
+    if username and username != "user" and username != "None":
+        return f"@{username}"
+    else:
+        return f"ID: {user_id}"
+
 # Hàm thông báo cho admin
-def notify_admin(action, username, user_id=None, extra=""):
+def notify_admin(action, display_name, user_id=None, extra=""):
     """Gửi thông báo ngắn gọn cho admin"""
     try:
         if default_admin_id:
-            msg = f"📌 @{username}: {action}"
+            msg = f"📌 {display_name}: {action}"
             if extra:
                 msg += f" - {extra}"
             bot.send_message(int(default_admin_id), msg)
@@ -679,7 +695,14 @@ def send_welcome(message):
     try:
         id = message.from_user.id
         lang = get_user_lang(id)
-        usname = message.chat.username or "user"
+        # Lấy username hoặc first_name - user_id
+        if message.from_user.username:
+            usname = message.from_user.username
+            display_name = f"@{usname}"
+        else:
+            first_name = message.from_user.first_name or "User"
+            usname = f"{first_name}_{id}"  # Lưu vào DB
+            display_name = f"{first_name} - {id}"
         
         # Check admin first (fast - uses cached env var)
         user_is_admin = is_admin(id)
@@ -737,7 +760,7 @@ def send_welcome(message):
             
             # Notify admin if new user
             if is_new_user:
-                notify_admin("🆕 User mới", usname)
+                notify_admin("🆕 User mới", display_name)
             
             # Check promotion and add banner if active
             promo_banner = ""
@@ -794,7 +817,9 @@ def manage_users(message):
             created_str = str(created_at)[:10] if created_at else "N/A"
         else:
             created_str = "N/A"
-        msg += f"{i}. @{uname}\n"
+        # Hiển thị đúng format
+        display = get_user_display_name_from_data(uname, uid)
+        msg += f"{i}. {display}\n"
         msg += f"   📅 Tham gia: {created_str}\n"
     
     bot.send_message(id, msg, reply_markup=keyboard, parse_mode="Markdown")
@@ -1803,10 +1828,10 @@ def handle_get_otp(message):
     """Handle get OTP button - retrieve login code from TempMail"""
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
-    usname = message.chat.username or "user"
+    display_name = get_user_display_name(message)
     
     if not is_admin(user_id):
-        notify_admin("🔑 Lấy OTP", usname)
+        notify_admin("🔑 Lấy OTP", display_name)
     
     # Get user's Canva accounts
     accounts = CanvaAccountDB.get_buyer_accounts(user_id)
@@ -2148,9 +2173,9 @@ def handle_buy_with_quantity(message):
 @bot.message_handler(commands=['buy'])
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
 def shop_items(message):
-    usname = message.chat.username or "user"
+    display_name = get_user_display_name(message)
     if not is_admin(message.from_user.id):
-        notify_admin("🛒 Xem sản phẩm", usname)
+        notify_admin("🛒 Xem sản phẩm", display_name)
     UserOperations.shop_items(message)
 
 # Command shortcuts
@@ -2313,9 +2338,8 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
                 admin_msg = f"🛒 *Đơn hàng mới đang chờ thanh toán*\n"
                 admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                admin_msg += f"� Khnách: @{username}\n"
-                admin_msg += f"� Sốản phẩm: {product_name_with_qty}\n"
-                admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+                admin_msg += f"👤 Khách: @{username}\n"
+                admin_msg += f"📦 Sản phẩm: {product_name_with_qty}\n"
                 admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
                 sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
                 admin_msg_ids.append({"chat_id": admin[0], "message_id": sent.message_id})
@@ -2420,10 +2444,10 @@ def is_my_orders_button(text):
 def MyOrdersList(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    usname = message.chat.username or "user"
+    display_name = get_user_display_name(message)
     
     if not is_admin(id):
-        notify_admin("📋 Xem đơn hàng", usname)
+        notify_admin("📋 Xem đơn hàng", display_name)
     
     my_orders = GetDataFromDB.GetOrderIDs_Buyer(id)
     if my_orders == [] or my_orders == "None":
@@ -2470,11 +2494,11 @@ def is_support_button(text):
 def ContactSupport(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    usname = message.chat.username or "user"
+    display_name = get_user_display_name(message)
     support_username = os.getenv("SUPPORT_USERNAME", "dlndai")
     
     if not is_admin(id):
-        notify_admin("📞 Xem hỗ trợ", usname)
+        notify_admin("📞 Xem hỗ trợ", display_name)
     
     # Create inline button to open chat with admin
     inline_kb = types.InlineKeyboardMarkup()
