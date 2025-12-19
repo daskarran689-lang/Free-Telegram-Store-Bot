@@ -186,7 +186,7 @@ LANGUAGES = {
         "manage_orders": "Quản lý đơn hàng 🛍",
         "payment_methods": "Phương thức thanh toán 💳",
         "news_to_users": "Thông báo người dùng 📣",
-        "switch_to_user": "Chuyển sang người dùng 🙍‍♂️",
+        "switch_to_user": "Quản lý người dùng 👥",
         "add_product": "Thêm sản phẩm mới ➕",
         "restock_product": "Thêm hàng/keys 📦",
         "list_product": "Danh sách sản phẩm 🏷",

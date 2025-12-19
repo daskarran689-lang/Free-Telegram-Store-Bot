@@ -908,6 +908,29 @@ class GetDataFromDB:
         except Exception as e:
             logger.error(f"Error getting users info: {e}")
             return None
+    
+    def GetUsersInfoWithDate():
+        try:
+            # Thử query với created_at trước
+            result = execute_with_new_connection(
+                "SELECT DISTINCT user_id, username, wallet, created_at FROM ShopUserTable ORDER BY created_at DESC",
+                fetch='all'
+            )
+            return result
+        except Exception as e:
+            # Nếu không có cột created_at, query không có cột đó
+            try:
+                result = execute_with_new_connection(
+                    "SELECT DISTINCT user_id, username, wallet FROM ShopUserTable",
+                    fetch='all'
+                )
+                # Thêm None cho created_at
+                if result:
+                    return [(r[0], r[1], r[2], None) for r in result]
+                return None
+            except Exception as e2:
+                logger.error(f"Error getting users info with date: {e2}")
+                return None
         
     def AllUsers():
         try:

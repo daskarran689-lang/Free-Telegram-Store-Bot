@@ -717,39 +717,45 @@ def send_welcome(message):
         logger.error(f"Error in send_welcome: {e}")
         
 # Check if message matches switch to user button
-def is_switch_user_button(text):
-    keywords = ["Switch To User", "Chuyển sang người dùng", "switch to user", "chuyển sang người dùng"]
+def is_manage_users_button(text):
+    keywords = ["Quản lý người dùng", "quản lý người dùng", "Manage Users"]
     return any(kw in text for kw in keywords)
 
-#Switch admin to user handler
-@bot.message_handler(content_types=["text"], func=lambda message: is_switch_user_button(message.text))
-def admin_switch_user(message):
+# Manage users handler
+@bot.message_handler(content_types=["text"], func=lambda message: is_manage_users_button(message.text))
+def manage_users(message):
     id = message.from_user.id
-    usname = message.chat.username
     lang = get_user_lang(id)
-    keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
-    keyboard.row_width = 2
     
-    users = GetDataFromDB.GetUserIDsInDB()
-    if f"{id}" not in f"{users}":
-        CreateDatas.AddAuser(id,usname)
-    user_data = GetDataFromDB.GetUserWalletInDB(id)
+    if not is_admin(id):
+        bot.send_message(id, "❌ Chỉ admin mới có quyền truy cập!", reply_markup=create_main_keyboard(lang, id))
+        return
     
-    key1 = types.KeyboardButton(text=get_text("shop_items", lang))
-    key2 = types.KeyboardButton(text=get_text("my_orders", lang))
-    key3 = types.KeyboardButton(text=get_text("support", lang))
-    key4 = types.KeyboardButton(text=get_text("home", lang))
-    keyboard.add(key1)
-    keyboard.add(key2, key3)
-    keyboard.add(key4)
+    # Get all users with created_at
+    all_users = GetDataFromDB.GetUsersInfoWithDate()
     
-    welcome_msg = f"{get_text('welcome_customer', lang)}\n\n{get_text('wallet_balance', lang)} {user_data} 💰"
-    welcome_photo = "AgACAgUAAxkBAAIJDGlCseCl8GNEMppfwlYCUDLvfr1LAAMNaxuCZRBWIvBQc4pixGQBAAMCAAN3AAM2BA"
-    try:
-        bot.send_photo(message.chat.id, photo=welcome_photo, caption=welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
-    except:
-        bot.send_message(message.chat.id, welcome_msg, reply_markup=keyboard, parse_mode="Markdown")
-    bot.send_message(id, get_text("user_mode", lang), reply_markup=keyboard)
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+    
+    if not all_users:
+        bot.send_message(id, "📭 Chưa có người dùng nào!", reply_markup=keyboard)
+        return
+    
+    msg = f"👥 *DANH SÁCH NGƯỜI DÙNG*\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"📊 Tổng: {len(all_users)} người dùng\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for i, user in enumerate(all_users, 1):
+        uid, uname, uwallet, created_at = user
+        if created_at:
+            created_str = str(created_at)[:10] if created_at else "N/A"
+        else:
+            created_str = "N/A"
+        msg += f"{i}. @{uname}\n"
+        msg += f"   📅 Tham gia: {created_str}\n"
+    
+    bot.send_message(id, msg, reply_markup=keyboard, parse_mode="Markdown")
 
 # Check if message matches manage promotion button
 def is_manage_promotion_button(text):
