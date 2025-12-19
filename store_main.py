@@ -771,7 +771,9 @@ def send_welcome(message):
                 if remaining > 0:
                     promo_banner = f"🎉 *ĐANG CÓ KHUYẾN MÃI MUA 1 TẶNG 1!*\n🎁 Còn lại {remaining} slot\n━━━━━━━━━━━━━━\n\n"
             
-            welcome_msg = promo_banner + get_text("welcome_customer", lang).replace("{username}", usname or "bạn")
+            # Escape username để tránh lỗi Markdown (thay _ bằng \\_)
+            safe_display = display_name.replace("_", "\\_")
+            welcome_msg = promo_banner + get_text("welcome_customer", lang).replace("{username}", safe_display)
             # Send welcome with photo (using Telegram file_id for speed)
             welcome_photo = "AgACAgUAAxkBAAIJDGlCseCl8GNEMppfwlYCUDLvfr1LAAMNaxuCZRBWIvBQc4pixGQBAAMCAAN3AAM2BA"
             try:
