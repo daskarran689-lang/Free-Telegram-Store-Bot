@@ -101,6 +101,18 @@ def is_admin(user_id):
     admin_ids = [str(admin[0]) for admin in admins]
     return str(user_id) in admin_ids
 
+# Hàm thông báo cho admin
+def notify_admin(action, username, user_id=None, extra=""):
+    """Gửi thông báo ngắn gọn cho admin"""
+    try:
+        if default_admin_id:
+            msg = f"📌 @{username}: {action}"
+            if extra:
+                msg += f" - {extra}"
+            bot.send_message(int(default_admin_id), msg)
+    except Exception as e:
+        logger.error(f"Error notifying admin: {e}")
+
 # Add default admin from env if set
 if default_admin_id:
     try:
@@ -695,7 +707,15 @@ def send_welcome(message):
             bot.send_message(message.chat.id, f"{get_text('welcome_admin', lang)}\n\n{store_statistics}", reply_markup=keyboardadmin, parse_mode='Markdown')
         else:
             # Customer - minimal DB calls
+            # Check if new user
+            existing_users = GetDataFromDB.GetUserIDsInDB() or []
+            is_new_user = str(id) not in str(existing_users)
+            
             CreateDatas.AddAuser(id, usname)
+            
+            # Notify admin if new user
+            if is_new_user:
+                notify_admin("🆕 User mới", usname)
             
             # Check promotion and add banner if active
             promo_banner = ""
@@ -1761,6 +1781,10 @@ def handle_get_otp(message):
     """Handle get OTP button - retrieve login code from TempMail"""
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
+    usname = message.chat.username or "user"
+    
+    if not is_admin(user_id):
+        notify_admin("🔑 Lấy OTP", usname)
     
     # Get user's Canva accounts
     accounts = CanvaAccountDB.get_buyer_accounts(user_id)
@@ -2102,6 +2126,9 @@ def handle_buy_with_quantity(message):
 @bot.message_handler(commands=['buy'])
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
 def shop_items(message):
+    usname = message.chat.username or "user"
+    if not is_admin(message.from_user.id):
+        notify_admin("🛒 Xem sản phẩm", usname)
     UserOperations.shop_items(message)
 
 # Command shortcuts
@@ -2365,6 +2392,10 @@ def is_my_orders_button(text):
 def MyOrdersList(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    usname = message.chat.username or "user"
+    
+    if not is_admin(id):
+        notify_admin("📋 Xem đơn hàng", usname)
     
     my_orders = GetDataFromDB.GetOrderIDs_Buyer(id)
     if my_orders == [] or my_orders == "None":
@@ -2411,7 +2442,11 @@ def is_support_button(text):
 def ContactSupport(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    usname = message.chat.username or "user"
     support_username = os.getenv("SUPPORT_USERNAME", "dlndai")
+    
+    if not is_admin(id):
+        notify_admin("📞 Xem hỗ trợ", usname)
     
     # Create inline button to open chat with admin
     inline_kb = types.InlineKeyboardMarkup()
