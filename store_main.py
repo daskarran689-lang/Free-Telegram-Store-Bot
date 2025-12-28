@@ -2971,12 +2971,16 @@ def MessageAllUsers(message):
     admins = GetDataFromDB.GetAdminIDsInDB()
     
     if is_admin(id):
-        msg = bot.send_message(id, get_text("broadcast_message", lang))
+        # Tạo keyboard với nút hủy
+        cancel_kb = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        cancel_kb.add(types.KeyboardButton(text="❌ Hủy"))
+        msg = bot.send_message(id, get_text("broadcast_message", lang), reply_markup=cancel_kb)
         bot.register_next_step_handler(msg, message_all_users)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
 def message_all_users(message):
     id = message.from_user.id
+    lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB()
     
     
@@ -2992,7 +2996,14 @@ def message_all_users(message):
             keyboardadmin.add(key1, key2)
             keyboardadmin.add(key3, key4)
             keyboardadmin.add(key5)
+            
             input_message = message.text
+            
+            # Kiểm tra nếu admin bấm hủy
+            if input_message == "❌ Hủy":
+                bot.send_message(id, "❌ Đã hủy gửi thông báo", reply_markup=keyboardadmin)
+                return
+            
             all_users = GetDataFromDB.GetUsersInfo()
             if all_users ==  []:
                 msg = bot.send_message(id, "Chưa có người dùng nào trong cửa hàng, /start", reply_markup=keyboardadmin)
