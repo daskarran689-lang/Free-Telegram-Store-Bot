@@ -566,6 +566,9 @@ def callback_query(call):
                 cancelled_product = cancelled_order.get("product_name", "N/A")
                 cancelled_amount = cancelled_order.get("price", 0)
                 
+                # Cancel PayOS payment link
+                cancel_payos_payment(ordernumber, "Khách hủy đơn")
+                
                 # Remove from pending orders (memory only, not in DB)
                 if ordernumber in pending_orders_info:
                     del pending_orders_info[ordernumber]
@@ -2315,6 +2318,36 @@ def create_payos_payment_link(ordernumber, amount, description, buyer_name, canc
         logger.error(f"PayOS create payment error: {e}")
         return None
 
+def cancel_payos_payment(ordernumber, reason="User cancelled"):
+    """Cancel PayOS payment link via API"""
+    if not PAYOS_CLIENT_ID or not PAYOS_API_KEY:
+        return False
+    
+    try:
+        api_url = f"https://api-merchant.payos.vn/v2/payment-requests/{ordernumber}/cancel"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "x-client-id": PAYOS_CLIENT_ID,
+            "x-api-key": PAYOS_API_KEY
+        }
+        
+        data = {"cancellationReason": reason[:50]}
+        
+        response = requests.post(api_url, json=data, headers=headers, timeout=10)
+        result = response.json()
+        
+        if result.get("code") == "00":
+            logger.info(f"PayOS: Cancelled order {ordernumber}")
+            return True
+        else:
+            logger.warning(f"PayOS cancel failed: {result}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"PayOS cancel error: {e}")
+        return False
+
 # Helper function to parse price (handles "40k", "100k", "1.5m", etc.)
 def parse_price(price_str):
     """Parse price string like '40k', '100k', '1.5m' to integer"""
@@ -2951,11 +2984,11 @@ def message_all_users(message):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
         keyboardadmin.row_width = 2
         try:
-            key1 = types.KeyboardButton(text="Manage Products 💼")
-            key2 = types.KeyboardButton(text="Manage Orders 🛍")
-            key3 = types.KeyboardButton(text="Payment Methods 💳")
-            key4 = types.KeyboardButton(text="News To Users 📣")
-            key5 = types.KeyboardButton(text="Switch To User 🙍‍♂️")
+            key1 = types.KeyboardButton(text="Quản lý sản phẩm 💼")
+            key2 = types.KeyboardButton(text="Quản lý đơn hàng 🛍")
+            key3 = types.KeyboardButton(text="Phương thức thanh toán 💳")
+            key4 = types.KeyboardButton(text="Gửi thông báo 📣")
+            key5 = types.KeyboardButton(text="Quản lý người dùng 👥")
             keyboardadmin.add(key1, key2)
             keyboardadmin.add(key3, key4)
             keyboardadmin.add(key5)
