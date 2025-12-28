@@ -2397,25 +2397,14 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         # Save admin message IDs to edit later
         pending_admin_messages[ordernumber] = admin_msg_ids
         
-        # Try PayOS first, fallback to VietQR
-        payos_result = create_payos_payment_link(ordernumber, amount, transfer_content, username)
-        
-        if payos_result and payos_result.get("qrCode"):
-            # Use PayOS QR
-            qr_url = payos_result["qrCode"]
-            checkout_url = payos_result.get("checkoutUrl", "")
-            logger.info(f"PayOS payment created for order {ordernumber}")
-        else:
-            # Fallback to VietQR (manual confirmation needed)
-            qr_url = generate_vietqr_url(
-                bank_cfg["bank_code"],
-                bank_cfg["account_number"],
-                bank_cfg["account_name"],
-                amount,
-                transfer_content
-            )
-            checkout_url = ""
-            logger.info(f"Using VietQR fallback for order {ordernumber}")
+        # Generate VietQR (PayOS webhook sẽ xử lý khi có thanh toán)
+        qr_url = generate_vietqr_url(
+            bank_cfg["bank_code"],
+            bank_cfg["account_number"],
+            bank_cfg["account_name"],
+            amount,
+            transfer_content
+        )
         
         # Single message with QR, info and cancel button
         msg = get_text("scan_qr_transfer", lang, 
