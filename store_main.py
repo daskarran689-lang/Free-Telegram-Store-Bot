@@ -60,6 +60,11 @@ default_admin_id = os.getenv('ADMIN_ID', '')
 TEMPMAIL_EMAIL = os.getenv('TEMPMAIL_EMAIL', '')
 TEMPMAIL_PASSWORD = os.getenv('TEMPMAIL_PASSWORD', '')
 
+# PayOS credentials
+PAYOS_CLIENT_ID = os.getenv('PAYOS_CLIENT_ID', '')
+PAYOS_API_KEY = os.getenv('PAYOS_API_KEY', '')
+PAYOS_CHECKSUM_KEY = os.getenv('PAYOS_CHECKSUM_KEY', '')
+
 if not webhook_url or not bot_token:
     logger.error("Missing required environment variables: RENDER_EXTERNAL_URL/NGROK_HTTPS_URL or TELEGRAM_BOT_TOKEN")
     exit(1)
@@ -173,231 +178,190 @@ def telegram_webhook():
         return "error", 500
 
 
-# Casso webhook for auto-confirm bank transfer
-CASSO_SECURE_TOKEN = os.getenv("CASSO_SECURE_TOKEN", "")
+# PayOS helper functions
+import hashlib
+import hmac
 
-@flask_app.route("/casso-webhook", methods=["POST", "GET"])
-def casso_webhook():
-    """Handle incoming webhook from Casso for bank transfer confirmation"""
-    # GET request for webhook verification
+def create_payos_signature(data, checksum_key):
+    """Create signature for PayOS webhook verification"""
+    sorted_data = sorted(data.items())
+    data_str = "&".join([f"{k}={v}" for k, v in sorted_data if k != "signature"])
+    signature = hmac.new(checksum_key.encode(), data_str.encode(), hashlib.sha256).hexdigest()
+    return signature
+
+def verify_payos_webhook(data, signature, checksum_key):
+    """Verify PayOS webhook signature"""
+    calculated_sig = create_payos_signature(data, checksum_key)
+    return calculated_sig == signature
+
+@flask_app.route("/payos-webhook", methods=["POST", "GET"])
+def payos_webhook():
+    """Handle incoming webhook from PayOS for payment confirmation"""
     if request.method == "GET":
         return "ok", 200
     
     try:
-        # Verify secure token if set
-        if CASSO_SECURE_TOKEN:
-            auth_header = request.headers.get("Secure-Token") or request.headers.get("Authorization")
-            if auth_header != CASSO_SECURE_TOKEN and auth_header != f"Apikey {CASSO_SECURE_TOKEN}":
-                logger.warning("Invalid Casso secure token")
-                return "unauthorized", 401
+        data = request.json
+        logger.info(f"PayOS webhook received: {data}")
         
-        data = request.get_json(silent=True)
-        logger.info(f"Casso webhook received: {data}")
-        
-        # Handle empty or invalid data (test webhook from Casso)
         if not data:
-            logger.info("Empty webhook data - returning ok for test")
             return "ok", 200
         
-        # Casso sends transaction data in 'data' array
-        transactions = data.get("data", [])
+        # PayOS webhook format
+        webhook_data = data.get("data", {})
+        code = data.get("code")
         
-        # If no transactions, just return ok (test webhook)
-        if not transactions:
-            logger.info("No transactions in webhook - returning ok")
+        # code = "00" means success
+        if code != "00":
+            logger.info(f"PayOS webhook code not success: {code}")
             return "ok", 200
         
-        for txn in transactions:
-            # Get transaction details
-            amount = txn.get("amount", 0)
-            description = txn.get("description", "").upper()
-            
-            # Skip outgoing transactions (negative amount)
-            if amount <= 0:
-                continue
-            
-            logger.info(f"Processing transaction: amount={amount}, desc={description}")
-            
-            # Find order by transfer content (DH + order number)
-            # Look for pattern DHxxxxx in description
-            import re
-            match = re.search(r'DH(\d{5})', description)
-            if match:
-                ordernumber = int(match.group(1))
-                logger.info(f"Found order number: {ordernumber}")
+        order_code = webhook_data.get("orderCode")
+        amount = webhook_data.get("amount", 0)
+        description = webhook_data.get("description", "")
+        
+        if not order_code:
+            return "ok", 200
+        
+        # order_code is our ordernumber
+        ordernumber = int(order_code)
+        
+        # Check if order exists in pending_orders_info
+        if ordernumber not in pending_orders_info:
+            logger.warning(f"PayOS: Order {ordernumber} not found in pending orders")
+            return "ok", 200
+        
+        order_info = pending_orders_info[ordernumber]
+        user_id = order_info["user_id"]
+        username = order_info["username"]
+        product_name = order_info["product_name"]
+        price = order_info["price"]
+        quantity = order_info["quantity"]
+        product_number = order_info["product_number"]
+        orderdate = order_info["orderdate"]
+        
+        # Get Canva accounts
+        canva_accounts = CanvaAccountDB.get_available_accounts(quantity)
+        
+        if not canva_accounts:
+            logger.error(f"PayOS: No Canva accounts available for order {ordernumber}")
+            bot.send_message(user_id, "❌ Hết tài khoản Canva! Vui lòng liên hệ admin.")
+            return "ok", 200
+        
+        productkeys = "\n".join([acc[0] for acc in canva_accounts])
+        
+        # Mark accounts as sold
+        for acc in canva_accounts:
+            CanvaAccountDB.mark_account_sold(acc[0], user_id)
+        
+        # Save order to database
+        CreateDatas.AddOrder(
+            ordernumber, user_id, username, product_name, price,
+            orderdate, "PayOS", "", productkeys, "", product_number
+        )
+        
+        # Delete QR message
+        if ordernumber in pending_qr_messages:
+            try:
+                msg_info = pending_qr_messages[ordernumber]
+                bot.delete_message(msg_info["chat_id"], msg_info["message_id"])
+            except:
+                pass
+            del pending_qr_messages[ordernumber]
+        
+        # Check promotion
+        promo_msg = ""
+        promo_info = PromotionDB.get_promotion_info()
+        if promo_info and promo_info["is_active"]:
+            sold_before = promo_info["sold_count"]
+            max_promo = promo_info["max_count"]
+            if sold_before < max_promo:
+                remaining_slots = max_promo - sold_before
+                promo_bonus = min(quantity, remaining_slots)
+                promo_slot_start = sold_before + 1
+                promo_slot_end = min(sold_before + quantity, max_promo)
                 
-                # Check if order exists in pending_orders_info (memory)
-                if ordernumber not in pending_orders_info:
-                    logger.info(f"Order {ordernumber} not found in pending orders")
-                    continue
+                PromotionDB.increment_sold_count(quantity)
                 
-                pending_order = pending_orders_info[ordernumber]
-                buyerid = pending_order["user_id"]
-                buyerusername = pending_order["username"]
-                productname = pending_order["product_name"]
-                productprice = pending_order["price"]
-                orderdate = pending_order["orderdate"]
-                productnumber = pending_order["product_number"]
-                productdownloadlink = pending_order["download_link"]
-                quantity = pending_order["quantity"]
-                transfer_content = pending_order["transfer_content"]
-                
-                # Verify amount matches (with some tolerance)
-                expected_amount = productprice
-                if amount < expected_amount * 0.99:  # Allow 1% tolerance
-                    logger.warning(f"Amount mismatch: got {amount}, expected {expected_amount}")
-                    continue
-                
-                # Check promotion: Buy 1 Get 1 Free for first 10 accounts
-                promo_bonus = 0
-                promo_slot_start = 0
-                promo_slot_end = 0
-                promo_info = PromotionDB.get_promotion_info()
-                
-                if promo_info and promo_info["is_active"]:
-                    sold_before = promo_info["sold_count"]
-                    max_promo = promo_info["max_count"]
-                    if sold_before < max_promo:
-                        # Calculate how many accounts qualify for promotion
-                        remaining_promo_slots = max_promo - sold_before
-                        promo_bonus = min(quantity, remaining_promo_slots)
-                        promo_slot_start = sold_before + 1
-                        promo_slot_end = min(sold_before + quantity, max_promo)
-                        # Increment sold count in promotion
-                        PromotionDB.increment_sold_count(quantity)
-                
-                try:
-                    # Get Canva accounts from database
-                    available_accounts = CanvaAccountDB.get_available_accounts(quantity)
-                    if len(available_accounts) >= quantity:
-                        emails = []
-                        for acc in available_accounts:
-                            acc_id, email, authkey = acc
-                            CanvaAccountDB.assign_account_to_buyer(acc_id, buyerid, ordernumber)
-                            emails.append(email)
-                        productkeys = "\n".join(emails)
-                    elif available_accounts:
-                        emails = []
-                        for acc in available_accounts:
-                            acc_id, email, authkey = acc
-                            CanvaAccountDB.assign_account_to_buyer(acc_id, buyerid, ordernumber)
-                            emails.append(email)
-                        productkeys = "\n".join(emails)
-                    else:
-                        productkeys = "Liên hệ admin để nhận tài khoản"
-                except Exception as e:
-                    logger.error(f"Error getting Canva account: {e}")
-                    productkeys = "Liên hệ admin để nhận tài khoản"
-                
-                # NOW create order in database (only after payment confirmed)
-                CreateDatas.AddOrder(buyerid, buyerusername, productname, str(productprice), orderdate, "BankTransfer", productdownloadlink, productkeys, ordernumber, productnumber, transfer_content)
-                
-                # Update product quantity
-                product_list = GetDataFromDB.GetProductInfoByPName(productnumber)
-                for pnum, pname, pprice, pdesc, pimg, plink, pqty, pcat in product_list:
-                    new_qty = max(0, int(pqty) - quantity)
-                    CreateDatas.UpdateProductQuantity(new_qty, productnumber)
-                
-                # Clean up pending data
-                if ordernumber in pending_order_quantities:
-                    del pending_order_quantities[ordernumber]
-                if ordernumber in pending_orders_info:
-                    del pending_orders_info[ordernumber]
-                
-                # Delete QR message and notify buyer
-                lang = get_user_lang(buyerid)
-                
-                # Try to delete the QR message
-                if ordernumber in pending_qr_messages:
-                    try:
-                        qr_msg = pending_qr_messages[ordernumber]
-                        bot.delete_message(qr_msg["chat_id"], qr_msg["message_id"])
-                        del pending_qr_messages[ordernumber]
-                    except Exception as e:
-                        logger.error(f"Error deleting QR message: {e}")
-                
-                # Format price with comma
-                try:
-                    price_num = int(float(str(productprice).replace(',', '').replace('k', '000').replace('K', '000')))
-                except:
-                    price_num = productprice
-                
-                # Build promotion message if eligible (to insert after "THANH TOÁN THÀNH CÔNG!")
-                promo_msg = ""
-                if promo_bonus > 0:
-                    # Format slot display: single = "1", multiple = "8-9"
-                    if promo_bonus == 1:
-                        slot_display = f"{promo_slot_start}"
-                    else:
-                        slot_display = f"{promo_slot_start}-{promo_slot_end}"
-                    
-                    promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI MUA 1 TẶNG 1!*\n"
-                    promo_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    promo_msg += f"🎯 Suất khuyến mãi: slot {slot_display}\n"
-                    promo_msg += f"📩 Inbox Admin kèm mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
-                
-                buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, productname, price_num, store_currency, productkeys)
-                try:
-                    # Create inline keyboard with OTP buttons for each email
-                    inline_kb = types.InlineKeyboardMarkup()
-                    # Split emails (productkeys may contain multiple emails separated by newline)
-                    email_list = [e.strip() for e in productkeys.split('\n') if e.strip() and '@' in e]
-                    for email in email_list:
-                        inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy mã cho {email}", callback_data=f"otp_{email}"))
-                    
-                    # Create reply keyboard
-                    otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    otp_keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
-                    otp_keyboard.row(
-                        types.KeyboardButton(text="🛍 Đơn hàng"),
-                        types.KeyboardButton(text="📞 Hỗ trợ")
-                    )
-                    otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
-                    
-                    # Send message with inline buttons
-                    bot.send_message(buyerid, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                    # Send celebration image with reply keyboard (to update keyboard)
-                    success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
-                    bot.send_photo(buyerid, success_photo, reply_markup=otp_keyboard)
-                except Exception as e:
-                    logger.error(f"Error notifying buyer: {e}")
-                
-                # Edit admin notification message (instead of sending new)
-                admin_msg = f"✅ *Đơn hàng đã thanh toán thành công!*\n"
-                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                admin_msg += f"👤 Khách: @{buyerusername}\n"
-                admin_msg += f"📦 Sản phẩm: {productname}\n"
-                admin_msg += f"💰 Số tiền: {amount:,} VND\n"
-                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                admin_msg += f"🔑 *Tài khoản đã cấp:*\n`{productkeys}`"
-                
-                # Try to edit existing admin messages
-                if ordernumber in pending_admin_messages:
-                    for msg_info in pending_admin_messages[ordernumber]:
-                        try:
-                            bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown")
-                        except:
-                            pass
-                    del pending_admin_messages[ordernumber]
+                if promo_bonus == 1:
+                    slot_display = f"{promo_slot_start}"
                 else:
-                    # Fallback: send new message if no saved message
-                    admins = GetDataFromDB.GetAdminIDsInDB() or []
-                    for admin in admins:
-                        try:
-                            bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
-                        except:
-                            pass
+                    slot_display = f"{promo_slot_start}-{promo_slot_end}"
                 
-                logger.info(f"Order {ordernumber} auto-confirmed!")
+                promo_msg = f"\n\n🎉 *CHÚC MỪNG! BẠN ĐƯỢC KHUYẾN MÃI MUA 1 TẶNG 1!*\n"
+                promo_msg += f"━━━━━━━━━━━━━━\n"
+                promo_msg += f"🎯 Suất khuyến mãi: slot {slot_display}\n"
+                promo_msg += f"📩 Inbox Admin kèm mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
         
+        # Send success message to buyer
+        lang = get_user_lang(user_id)
+        try:
+            price_num = int(float(str(price).replace(',', '')))
+        except:
+            price_num = price
+        
+        buyer_msg = get_text("your_new_order", lang, promo_msg, ordernumber, orderdate, product_name, price_num, store_currency, productkeys)
+        
+        inline_kb = types.InlineKeyboardMarkup()
+        for acc in canva_accounts:
+            email = acc[0]
+            btn_text = f"🔑 Lấy OTP: {email[:20]}..." if len(email) > 20 else f"🔑 Lấy OTP: {email}"
+            inline_kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"otp_{email}"))
+        
+        try:
+            bot.send_message(user_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"PayOS: Error sending buyer message: {e}")
+            bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
+        
+        # Send success photo with OTP keyboard
+        otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        otp_keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
+        otp_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+        otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+        success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
+        try:
+            bot.send_photo(user_id, success_photo, reply_markup=otp_keyboard)
+        except:
+            pass
+        
+        # Edit admin notification
+        admin_msg = f"✅ *Đơn hàng đã thanh toán thành công!*\n"
+        admin_msg += f"━━━━━━━━━━━━━━\n"
+        admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+        admin_msg += f"👤 Khách: @{username}\n"
+        admin_msg += f"📦 Sản phẩm: {product_name}\n"
+        admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+        admin_msg += f"━━━━━━━━━━━━━━\n"
+        admin_msg += f"🔑 *Tài khoản đã cấp:*\n`{productkeys}`"
+        
+        if ordernumber in pending_admin_messages:
+            for msg_info in pending_admin_messages[ordernumber]:
+                try:
+                    bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown")
+                except:
+                    pass
+            del pending_admin_messages[ordernumber]
+        else:
+            admins = GetDataFromDB.GetAdminIDsInDB() or []
+            for admin in admins:
+                try:
+                    bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                except:
+                    pass
+        
+        # Cleanup
+        if ordernumber in pending_orders_info:
+            del pending_orders_info[ordernumber]
+        if ordernumber in pending_order_quantities:
+            del pending_order_quantities[ordernumber]
+        
+        logger.info(f"PayOS: Order {ordernumber} confirmed!")
         return "ok", 200
         
     except Exception as e:
-        logger.error(f"Error processing Casso webhook: {e}")
-        # Always return 200 to Casso to prevent retry spam
+        logger.error(f"Error processing PayOS webhook: {e}")
         return "ok", 200
-
 
 # Initialize payment settings
 def get_payment_api_key():
