@@ -2405,35 +2405,36 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         # Try PayOS first
         payos_result = create_payos_payment_link(ordernumber, amount, transfer_content, username)
         
-        if payos_result and payos_result.get("qrCode"):
-            # PayOS QR code is base64 data URL or URL
-            qr_data = payos_result["qrCode"]
+        if payos_result and payos_result.get("accountNumber"):
+            # PayOS trả về thông tin tài khoản ảo - dùng VietQR để tạo QR
             checkout_url = payos_result.get("checkoutUrl", "")
             payos_account = payos_result.get("accountNumber", "")
             payos_name = payos_result.get("accountName", "")
-            payos_bin = payos_result.get("bin", "")
+            payos_bin = payos_result.get("bin", "")  # Mã ngân hàng
             
-            # Build message for PayOS
+            # Tạo QR từ VietQR API với thông tin PayOS
+            import urllib.parse
+            qr_url = f"https://img.vietqr.io/image/{payos_bin}-{payos_account}-compact2.png"
+            params = {
+                "amount": int(amount),
+                "addInfo": transfer_content,
+                "accountName": payos_name
+            }
+            qr_url = f"{qr_url}?{urllib.parse.urlencode(params)}"
+            
+            # Build message
             msg = f"📱 <b>QUÉT MÃ QR ĐỂ THANH TOÁN</b>\n\n"
-            if payos_account:
-                msg += f"🏦 Ngân hàng: <b>{payos_bin}</b>\n"
-                msg += f"💳 Số TK: <code>{payos_account}</code>\n"
-                msg += f"👤 Chủ TK: <b>{payos_name}</b>\n"
+            msg += f"🏦 Ngân hàng: <b>MB Bank</b>\n"
+            msg += f"💳 Số TK: <code>{payos_account}</code>\n"
+            msg += f"👤 Chủ TK: <b>{payos_name}</b>\n"
             msg += f"💰 Số tiền: <b>{amount:,} VND</b>\n"
             msg += f"📝 Nội dung: <code>{transfer_content}</code>\n\n"
             msg += f"⏳ Mã đơn hàng: <code>{ordernumber}</code>\n"
             msg += f"<i>Sau khi chuyển, hệ thống sẽ tự xác nhận</i>"
             
-            # Check if qrCode is base64 or URL
-            if qr_data.startswith("data:image") or qr_data.startswith("http"):
-                qr_url = qr_data
-            else:
-                # Assume it's base64 without prefix
-                qr_url = f"data:image/png;base64,{qr_data}"
-            
-            logger.info(f"PayOS payment created for order {ordernumber}, checkout: {checkout_url}")
+            logger.info(f"PayOS payment created for order {ordernumber}")
         else:
-            # Fallback to VietQR
+            # Fallback to VietQR với tài khoản cá nhân
             qr_url = generate_vietqr_url(
                 bank_cfg["bank_code"],
                 bank_cfg["account_number"],
@@ -2452,13 +2453,8 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
             )
             logger.info(f"Using VietQR fallback for order {ordernumber}")
         
-        # Inline keyboard with cancel button (and checkout link if available)
+        # Inline keyboard with cancel button
         inline_kb = types.InlineKeyboardMarkup()
-        if checkout_url:
-            inline_kb.add(types.InlineKeyboardButton(
-                text="💳 Thanh toán online",
-                url=checkout_url
-            ))
         inline_kb.add(types.InlineKeyboardButton(
             text=get_text("cancel_order", lang),
             callback_data=f"cancel_order_{ordernumber}"
@@ -2472,22 +2468,10 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         
         # Send QR photo
         try:
-            if qr_url.startswith("data:image"):
-                # Base64 image - need to decode and send as bytes
-                import base64
-                import io
-                base64_data = qr_url.split(",")[1] if "," in qr_url else qr_url
-                image_bytes = base64.b64decode(base64_data)
-                sent_msg = bot.send_photo(user_id, io.BytesIO(image_bytes), caption=msg, reply_markup=inline_kb, parse_mode='HTML')
-            else:
-                # URL image
-                sent_msg = bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
+            sent_msg = bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
             pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
         except Exception as e:
             logger.error(f"Send QR failed: {e}")
-            # Fallback: send message with checkout link
-            if checkout_url:
-                msg += f"\n\n🔗 <a href='{checkout_url}'>Bấm vào đây để thanh toán</a>"
             sent_msg = bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
             pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
                 
