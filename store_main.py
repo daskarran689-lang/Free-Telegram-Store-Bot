@@ -256,8 +256,8 @@ def payos_webhook():
         
         # Save order to database
         CreateDatas.AddOrder(
-            ordernumber, user_id, username, product_name, price,
-            orderdate, "PayOS", "", productkeys, "", product_number
+            user_id, username, product_name, price, orderdate,
+            "PayOS", "", productkeys, ordernumber, product_number, ""
         )
         
         # Delete QR message
@@ -2257,6 +2257,58 @@ def generate_vietqr_url(bank_code, account_number, account_name, amount, content
     }
     return f"{base_url}?{urllib.parse.urlencode(params)}"
 
+def create_payos_payment_link(ordernumber, amount, description, buyer_name, cancel_url=None, return_url=None):
+    """Create PayOS payment link via API"""
+    if not PAYOS_CLIENT_ID or not PAYOS_API_KEY or not PAYOS_CHECKSUM_KEY:
+        logger.warning("PayOS credentials not configured")
+        return None
+    
+    try:
+        import hashlib
+        import hmac
+        
+        # PayOS API endpoint
+        api_url = "https://api-merchant.payos.vn/v2/payment-requests"
+        
+        # Prepare data
+        data = {
+            "orderCode": int(ordernumber),
+            "amount": int(amount),
+            "description": description[:25],  # Max 25 chars
+            "cancelUrl": cancel_url or webhook_url,
+            "returnUrl": return_url or webhook_url,
+            "buyerName": buyer_name[:50] if buyer_name else "Khách hàng"
+        }
+        
+        # Create signature: amount + cancelUrl + description + orderCode + returnUrl
+        signature_data = f"amount={data['amount']}&cancelUrl={data['cancelUrl']}&description={data['description']}&orderCode={data['orderCode']}&returnUrl={data['returnUrl']}"
+        signature = hmac.new(PAYOS_CHECKSUM_KEY.encode(), signature_data.encode(), hashlib.sha256).hexdigest()
+        data["signature"] = signature
+        
+        headers = {
+            "Content-Type": "application/json",
+            "x-client-id": PAYOS_CLIENT_ID,
+            "x-api-key": PAYOS_API_KEY
+        }
+        
+        response = requests.post(api_url, json=data, headers=headers, timeout=10)
+        result = response.json()
+        
+        if result.get("code") == "00":
+            payment_data = result.get("data", {})
+            return {
+                "checkoutUrl": payment_data.get("checkoutUrl"),
+                "qrCode": payment_data.get("qrCode"),
+                "paymentLinkId": payment_data.get("paymentLinkId")
+            }
+        else:
+            logger.error(f"PayOS API error: {result}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"PayOS create payment error: {e}")
+        return None
+
 # Helper function to parse price (handles "40k", "100k", "1.5m", etc.)
 def parse_price(price_str):
     """Parse price string like '40k', '100k', '1.5m' to integer"""
@@ -2345,14 +2397,25 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         # Save admin message IDs to edit later
         pending_admin_messages[ordernumber] = admin_msg_ids
         
-        # Generate VietQR
-        qr_url = generate_vietqr_url(
-            bank_cfg["bank_code"],
-            bank_cfg["account_number"],
-            bank_cfg["account_name"],
-            amount,
-            transfer_content
-        )
+        # Try PayOS first, fallback to VietQR
+        payos_result = create_payos_payment_link(ordernumber, amount, transfer_content, username)
+        
+        if payos_result and payos_result.get("qrCode"):
+            # Use PayOS QR
+            qr_url = payos_result["qrCode"]
+            checkout_url = payos_result.get("checkoutUrl", "")
+            logger.info(f"PayOS payment created for order {ordernumber}")
+        else:
+            # Fallback to VietQR (manual confirmation needed)
+            qr_url = generate_vietqr_url(
+                bank_cfg["bank_code"],
+                bank_cfg["account_number"],
+                bank_cfg["account_name"],
+                amount,
+                transfer_content
+            )
+            checkout_url = ""
+            logger.info(f"Using VietQR fallback for order {ordernumber}")
         
         # Single message with QR, info and cancel button
         msg = get_text("scan_qr_transfer", lang, 
@@ -2982,7 +3045,10 @@ def ListOrders(message):
                 for ordernumber, productname, buyerusername, orderdate in all_orders:
                     import time
                     time.sleep(0.3)
-                    bot.send_message(id, f"`{ordernumber}` - {productname} - @{buyerusername} - {orderdate}", parse_mode="Markdown")
+                    # Escape username để tránh lỗi Markdown
+                    safe_username = str(buyerusername).replace("_", "\\_") if buyerusername else "N/A"
+                    safe_productname = str(productname).replace("_", "\\_") if productname else "N/A"
+                    bot.send_message(id, f"`{ordernumber}` - {safe_productname} - @{safe_username} - {orderdate}", parse_mode="Markdown")
             key1 = types.KeyboardButton(text=get_text("list_orders", lang))
             key2 = types.KeyboardButton(text=get_text("delete_order", lang))
             key3 = types.KeyboardButton(text=get_text("home", lang))
@@ -3020,7 +3086,10 @@ def DeleteOrderMNG(message):
             else:
                 bot.send_message(id, "👇 Mã đơn hàng - Tên sản phẩm - Khách - Ngày mua 👇")
                 for ordernumber, productname, buyerusername, orderdate in all_orders:
-                    bot.send_message(id, f"/{ordernumber} - {productname} - @{buyerusername} - {orderdate}", parse_mode="Markdown")
+                    # Escape username để tránh lỗi Markdown
+                    safe_username = str(buyerusername).replace("_", "\\_") if buyerusername else "N/A"
+                    safe_productname = str(productname).replace("_", "\\_") if productname else "N/A"
+                    bot.send_message(id, f"/{ordernumber} - {safe_productname} - @{safe_username} - {orderdate}", parse_mode="Markdown")
                 msg = bot.send_message(id, "👆 Nhấn vào mã đơn hàng bạn muốn xóa", parse_mode="Markdown")
                 bot.register_next_step_handler(msg, delete_an_order)
         else:
