@@ -248,11 +248,12 @@ def payos_webhook():
             bot.send_message(user_id, "❌ Hết tài khoản Canva! Vui lòng liên hệ admin.")
             return "ok", 200
         
-        productkeys = "\n".join([acc[0] for acc in canva_accounts])
+        # canva_accounts format: [(id, email, authkey), ...]
+        productkeys = "\n".join([str(acc[1]) for acc in canva_accounts])  # acc[1] = email
         
         # Mark accounts as sold
         for acc in canva_accounts:
-            CanvaAccountDB.mark_account_sold(acc[0], user_id)
+            CanvaAccountDB.mark_account_sold(acc[1], user_id)  # acc[1] = email
         
         # Save order to database
         CreateDatas.AddOrder(
@@ -304,7 +305,7 @@ def payos_webhook():
         
         inline_kb = types.InlineKeyboardMarkup()
         for acc in canva_accounts:
-            email = acc[0]
+            email = acc[1]  # acc[1] = email
             btn_text = f"🔑 Lấy OTP: {email[:20]}..." if len(email) > 20 else f"🔑 Lấy OTP: {email}"
             inline_kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"otp_{email}"))
         
