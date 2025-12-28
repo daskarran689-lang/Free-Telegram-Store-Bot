@@ -2291,15 +2291,20 @@ def create_payos_payment_link(ordernumber, amount, description, buyer_name, canc
             "x-api-key": PAYOS_API_KEY
         }
         
+        logger.info(f"PayOS request: {data}")
         response = requests.post(api_url, json=data, headers=headers, timeout=10)
         result = response.json()
+        logger.info(f"PayOS response: {result}")
         
         if result.get("code") == "00":
             payment_data = result.get("data", {})
             return {
                 "checkoutUrl": payment_data.get("checkoutUrl"),
                 "qrCode": payment_data.get("qrCode"),
-                "paymentLinkId": payment_data.get("paymentLinkId")
+                "paymentLinkId": payment_data.get("paymentLinkId"),
+                "accountNumber": payment_data.get("accountNumber"),
+                "accountName": payment_data.get("accountName"),
+                "bin": payment_data.get("bin")
             }
         else:
             logger.error(f"PayOS API error: {result}")
@@ -2397,51 +2402,94 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         # Save admin message IDs to edit later
         pending_admin_messages[ordernumber] = admin_msg_ids
         
-        # Generate VietQR (PayOS webhook sẽ xử lý khi có thanh toán)
-        qr_url = generate_vietqr_url(
-            bank_cfg["bank_code"],
-            bank_cfg["account_number"],
-            bank_cfg["account_name"],
-            amount,
-            transfer_content
-        )
+        # Try PayOS first
+        payos_result = create_payos_payment_link(ordernumber, amount, transfer_content, username)
         
-        # Single message with QR, info and cancel button
-        msg = get_text("scan_qr_transfer", lang, 
-            bank_cfg["bank_code"], 
-            bank_cfg["account_number"], 
-            bank_cfg["account_name"],
-            amount, 
-            transfer_content,
-            ordernumber
-        )
+        if payos_result and payos_result.get("qrCode"):
+            # PayOS QR code is base64 data URL or URL
+            qr_data = payos_result["qrCode"]
+            checkout_url = payos_result.get("checkoutUrl", "")
+            payos_account = payos_result.get("accountNumber", "")
+            payos_name = payos_result.get("accountName", "")
+            payos_bin = payos_result.get("bin", "")
+            
+            # Build message for PayOS
+            msg = f"📱 <b>QUÉT MÃ QR ĐỂ THANH TOÁN</b>\n\n"
+            if payos_account:
+                msg += f"🏦 Ngân hàng: <b>{payos_bin}</b>\n"
+                msg += f"💳 Số TK: <code>{payos_account}</code>\n"
+                msg += f"👤 Chủ TK: <b>{payos_name}</b>\n"
+            msg += f"💰 Số tiền: <b>{amount:,} VND</b>\n"
+            msg += f"📝 Nội dung: <code>{transfer_content}</code>\n\n"
+            msg += f"⏳ Mã đơn hàng: <code>{ordernumber}</code>\n"
+            msg += f"<i>Sau khi chuyển, hệ thống sẽ tự xác nhận</i>"
+            
+            # Check if qrCode is base64 or URL
+            if qr_data.startswith("data:image") or qr_data.startswith("http"):
+                qr_url = qr_data
+            else:
+                # Assume it's base64 without prefix
+                qr_url = f"data:image/png;base64,{qr_data}"
+            
+            logger.info(f"PayOS payment created for order {ordernumber}, checkout: {checkout_url}")
+        else:
+            # Fallback to VietQR
+            qr_url = generate_vietqr_url(
+                bank_cfg["bank_code"],
+                bank_cfg["account_number"],
+                bank_cfg["account_name"],
+                amount,
+                transfer_content
+            )
+            checkout_url = ""
+            msg = get_text("scan_qr_transfer", lang, 
+                bank_cfg["bank_code"], 
+                bank_cfg["account_number"], 
+                bank_cfg["account_name"],
+                amount, 
+                transfer_content,
+                ordernumber
+            )
+            logger.info(f"Using VietQR fallback for order {ordernumber}")
         
-        # Inline keyboard with cancel button
+        # Inline keyboard with cancel button (and checkout link if available)
         inline_kb = types.InlineKeyboardMarkup()
+        if checkout_url:
+            inline_kb.add(types.InlineKeyboardButton(
+                text="💳 Thanh toán online",
+                url=checkout_url
+            ))
         inline_kb.add(types.InlineKeyboardButton(
             text=get_text("cancel_order", lang),
             callback_data=f"cancel_order_{ordernumber}"
         ))
         
-        # Edit loading message to QR photo using edit_message_media
+        # Delete loading and send QR
         try:
-            media = types.InputMediaPhoto(qr_url, caption=msg, parse_mode='HTML')
-            bot.edit_message_media(media, chat_id=user_id, message_id=loading_msg.message_id, reply_markup=inline_kb)
-            # Save message_id to delete later when payment confirmed
-            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": loading_msg.message_id}
-        except Exception as edit_err:
-            # Fallback: delete loading and send new photo
-            logger.warning(f"Edit media failed: {edit_err}, using fallback")
-            try:
-                bot.delete_message(user_id, loading_msg.message_id)
-            except:
-                pass
-            try:
+            bot.delete_message(user_id, loading_msg.message_id)
+        except:
+            pass
+        
+        # Send QR photo
+        try:
+            if qr_url.startswith("data:image"):
+                # Base64 image - need to decode and send as bytes
+                import base64
+                import io
+                base64_data = qr_url.split(",")[1] if "," in qr_url else qr_url
+                image_bytes = base64.b64decode(base64_data)
+                sent_msg = bot.send_photo(user_id, io.BytesIO(image_bytes), caption=msg, reply_markup=inline_kb, parse_mode='HTML')
+            else:
+                # URL image
                 sent_msg = bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
-                pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
-            except:
-                sent_msg = bot.send_message(user_id, msg, reply_markup=inline_kb)
-                pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
+            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
+        except Exception as e:
+            logger.error(f"Send QR failed: {e}")
+            # Fallback: send message with checkout link
+            if checkout_url:
+                msg += f"\n\n🔗 <a href='{checkout_url}'>Bấm vào đây để thanh toán</a>"
+            sent_msg = bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
                 
     except Exception as e:
         logger.error(f"Bank transfer error: {e}")
