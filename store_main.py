@@ -253,7 +253,7 @@ def payos_webhook():
         
         # Mark accounts as sold
         for acc in canva_accounts:
-            CanvaAccountDB.mark_account_sold(acc[1], user_id)  # acc[1] = email
+            CanvaAccountDB.assign_account_to_buyer(acc[0], user_id, ordernumber)  # acc[0] = id
         
         # Save order to database
         CreateDatas.AddOrder(
@@ -2461,20 +2461,23 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
             callback_data=f"cancel_order_{ordernumber}"
         ))
         
-        # Delete loading and send QR
+        # Edit loading message to QR photo
         try:
-            bot.delete_message(user_id, loading_msg.message_id)
-        except:
-            pass
-        
-        # Send QR photo
-        try:
-            sent_msg = bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
-            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
-        except Exception as e:
-            logger.error(f"Send QR failed: {e}")
-            sent_msg = bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
-            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
+            media = types.InputMediaPhoto(qr_url, caption=msg, parse_mode='HTML')
+            bot.edit_message_media(media, chat_id=user_id, message_id=loading_msg.message_id, reply_markup=inline_kb)
+            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": loading_msg.message_id}
+        except Exception as edit_err:
+            logger.warning(f"Edit media failed: {edit_err}, using fallback")
+            try:
+                bot.delete_message(user_id, loading_msg.message_id)
+            except:
+                pass
+            try:
+                sent_msg = bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
+                pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
+            except:
+                sent_msg = bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+                pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": sent_msg.message_id}
                 
     except Exception as e:
         logger.error(f"Bank transfer error: {e}")
