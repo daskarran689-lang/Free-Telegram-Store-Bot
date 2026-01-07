@@ -2367,6 +2367,31 @@ def parse_price(price_str):
         return 0
 
 
+# Pricing tiers based on quantity
+# 40K/1 | ≥10: 20K | ≥50: 10K
+def calculate_price_by_quantity(quantity):
+    """Calculate unit price based on quantity tiers
+    - Default: 40,000 VND per item
+    - ≥10 items: 20,000 VND per item
+    - ≥50 items: 10,000 VND per item
+    Returns: (unit_price, total_price)
+    """
+    if quantity >= 50:
+        unit_price = 10000
+    elif quantity >= 10:
+        unit_price = 20000
+    else:
+        unit_price = 40000
+    
+    total_price = unit_price * quantity
+    return unit_price, total_price
+
+
+def get_price_tier_text():
+    """Get price tier description for display"""
+    return "💰 Bảng giá:\n• 1-9 acc: 40K/acc\n• 10-49 acc: 20K/acc\n• 50+ acc: 10K/acc"
+
+
 # Process bank transfer order (reusable function)
 def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1):
     """Process bank transfer and show QR code"""
@@ -2390,8 +2415,8 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         loading_msg = bot.send_message(user_id, "⏳ Đang xử lý...")
     
     try:
-        unit_price = parse_price(order_info[2])
-        amount = unit_price * quantity  # Total amount = price * quantity
+        # Calculate price based on quantity tiers (40K/1 | ≥10: 20K | ≥50: 10K)
+        unit_price, amount = calculate_price_by_quantity(quantity)
         ordernumber = random.randint(10000, 99999)
         transfer_content = f"DH{ordernumber}"
         

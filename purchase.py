@@ -48,7 +48,12 @@ class UserOperations:
             )
             inline_kb.row(
                 types.InlineKeyboardButton(text="🛒 Mua (5)", callback_data="buy_qty_5"),
-                types.InlineKeyboardButton(text="🛒 Mua (10)", callback_data="buy_qty_10")
+                types.InlineKeyboardButton(text="🛒 Mua (10) 💰20K", callback_data="buy_qty_10"),
+                types.InlineKeyboardButton(text="🛒 Mua (20) 💰20K", callback_data="buy_qty_20")
+            )
+            inline_kb.row(
+                types.InlineKeyboardButton(text="🛒 Mua (50) 💰10K", callback_data="buy_qty_50"),
+                types.InlineKeyboardButton(text="🛒 Mua (100) 💰10K", callback_data="buy_qty_100")
             )
             
             # Reply keyboard for navigation
@@ -60,7 +65,12 @@ class UserOperations:
             )
             nav_keyboard.row(
                 types.KeyboardButton(text="🛒 Mua (5)"),
-                types.KeyboardButton(text="🛒 Mua (10)")
+                types.KeyboardButton(text="🛒 Mua (10)"),
+                types.KeyboardButton(text="🛒 Mua (20)")
+            )
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛒 Mua (50)"),
+                types.KeyboardButton(text="🛒 Mua (100)")
             )
             nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
             
@@ -68,7 +78,9 @@ class UserOperations:
             for productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory in products_list:
                 StoreCurrency = os.getenv('STORE_CURRENCY', 'VND')
                 # Use canva_stock instead of productquantity
-                caption = get_text("product_info", lang, productname, productprice, StoreCurrency, canva_stock, productdescription)
+                # Show price tiers instead of single price
+                price_tiers = "💰 Bảng giá:\n• 1-9 acc: 40K/acc\n• 10-49 acc: 20K/acc\n• 50+ acc: 10K/acc"
+                caption = f"🛍 <b>{productname}</b>\n\n📦 Còn: {canva_stock} tài khoản\n\n{price_tiers}\n\n📝 {productdescription}"
                 caption += "\n\n👇 Chọn số lượng muốn mua:"
                 try:
                     bot.send_photo(id, photo=f"{productimagelink}", caption=caption, reply_markup=inline_kb, parse_mode='HTML')
