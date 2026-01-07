@@ -40,14 +40,16 @@ class UserOperations:
             canva_stock = CanvaAccountDB.get_account_count()
             
             # Show inline buttons for quantity selection
-            inline_kb = types.InlineKeyboardMarkup(row_width=3)
+            inline_kb = types.InlineKeyboardMarkup(row_width=2)
             inline_kb.row(
                 types.InlineKeyboardButton(text="🛒 Mua (1)", callback_data="buy_qty_1"),
-                types.InlineKeyboardButton(text="🛒 Mua (2)", callback_data="buy_qty_2"),
-                types.InlineKeyboardButton(text="🛒 Mua (3)", callback_data="buy_qty_3")
+                types.InlineKeyboardButton(text="🛒 Mua (2)", callback_data="buy_qty_2")
             )
             inline_kb.row(
-                types.InlineKeyboardButton(text="🛒 Mua (5)", callback_data="buy_qty_5"),
+                types.InlineKeyboardButton(text="🛒 Mua (3)", callback_data="buy_qty_3"),
+                types.InlineKeyboardButton(text="🛒 Mua (5)", callback_data="buy_qty_5")
+            )
+            inline_kb.row(
                 types.InlineKeyboardButton(text="🛒 Mua (10)", callback_data="buy_qty_10"),
                 types.InlineKeyboardButton(text="🛒 Mua (20)", callback_data="buy_qty_20")
             )
@@ -60,11 +62,13 @@ class UserOperations:
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
             nav_keyboard.row(
                 types.KeyboardButton(text="🛒 Mua (1)"),
-                types.KeyboardButton(text="🛒 Mua (2)"),
-                types.KeyboardButton(text="🛒 Mua (3)")
+                types.KeyboardButton(text="🛒 Mua (2)")
             )
             nav_keyboard.row(
-                types.KeyboardButton(text="🛒 Mua (5)"),
+                types.KeyboardButton(text="🛒 Mua (3)"),
+                types.KeyboardButton(text="🛒 Mua (5)")
+            )
+            nav_keyboard.row(
                 types.KeyboardButton(text="🛒 Mua (10)"),
                 types.KeyboardButton(text="🛒 Mua (20)")
             )
