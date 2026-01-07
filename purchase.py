@@ -48,12 +48,12 @@ class UserOperations:
             )
             inline_kb.row(
                 types.InlineKeyboardButton(text="🛒 Mua (5)", callback_data="buy_qty_5"),
-                types.InlineKeyboardButton(text="🛒 Mua (10) 💰20K", callback_data="buy_qty_10"),
-                types.InlineKeyboardButton(text="🛒 Mua (20) 💰20K", callback_data="buy_qty_20")
+                types.InlineKeyboardButton(text="🛒 Mua (10)", callback_data="buy_qty_10"),
+                types.InlineKeyboardButton(text="🛒 Mua (20)", callback_data="buy_qty_20")
             )
             inline_kb.row(
-                types.InlineKeyboardButton(text="🛒 Mua (50) 💰10K", callback_data="buy_qty_50"),
-                types.InlineKeyboardButton(text="🛒 Mua (100) 💰10K", callback_data="buy_qty_100")
+                types.InlineKeyboardButton(text="🛒 Mua (50)", callback_data="buy_qty_50"),
+                types.InlineKeyboardButton(text="🛒 Mua (100)", callback_data="buy_qty_100")
             )
             
             # Reply keyboard for navigation
