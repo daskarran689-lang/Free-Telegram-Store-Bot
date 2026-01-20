@@ -414,3 +414,232 @@ Attachments: {len(email.get('attachments', []))}
 {'='*60}
 """
         return formatted
+
+
+# ============== EMAIL WORKER CLIENT (Domain mới: dlndaiiii.indevs.in) ==============
+
+class EmailWorkerClient:
+    """Client for Email Worker API (domain: dlndaiiii.indevs.in)"""
+    
+    WORKER_URL = "https://email-receiver.daidinh9875.workers.dev"
+    EMAIL_DOMAIN = "dlndaiiii.indevs.in"
+    
+    def __init__(self):
+        self.session = requests.Session()
+    
+    def create_email(self, custom_name: Optional[str] = None) -> str:
+        """
+        Tạo email mới
+        
+        Args:
+            custom_name: Tên email tùy chỉnh (không cần @domain)
+            
+        Returns:
+            str: Địa chỉ email đầy đủ
+        """
+        import random
+        import string
+        
+        if custom_name:
+            name = custom_name.replace("@", "").replace(" ", "").lower()
+        else:
+            name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        
+        return f"{name}@{self.EMAIL_DOMAIN}"
+    
+    def get_latest_email(self, email_address: str) -> Optional[Dict[str, Any]]:
+        """
+        Lấy email mới nhất
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            dict: Email data hoặc None
+        """
+        try:
+            r = self.session.get(f"{self.WORKER_URL}/m/{email_address}", timeout=10)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            print(f"Error getting latest email: {e}")
+        return None
+    
+    def get_all_emails(self, email_address: str) -> List[Dict[str, Any]]:
+        """
+        Lấy tất cả email
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            list: Danh sách email
+        """
+        try:
+            r = self.session.get(f"{self.WORKER_URL}/a/{email_address}", timeout=10)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            print(f"Error getting all emails: {e}")
+        return []
+    
+    def delete_emails(self, email_address: str) -> bool:
+        """
+        Xóa tất cả email
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            bool: True nếu thành công
+        """
+        try:
+            r = self.session.delete(f"{self.WORKER_URL}/d/{email_address}", timeout=10)
+            return r.status_code == 200
+        except:
+            return False
+    
+    def find_otp(self, email_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Tìm OTP 6 số trong email - ưu tiên Subject
+        
+        Args:
+            email_data: Dữ liệu email từ API
+            
+        Returns:
+            str: Mã OTP hoặc None
+        """
+        if not email_data:
+            return None
+        
+        # Ưu tiên Subject (key 's')
+        subject = str(email_data.get('s', ''))
+        otp = re.findall(r'\b\d{6}\b', subject)
+        if otp:
+            return otp[0]
+        
+        # Tìm trong body (key 'b')
+        body = str(email_data.get('b', ''))
+        
+        # Bỏ header email, chỉ lấy phần content
+        plain_start = body.find('Content-Type: text/plain')
+        if plain_start > 0:
+            body = body[plain_start:]
+        
+        otp = re.findall(r'\b\d{6}\b', body)
+        # Loại bỏ các số không phải OTP
+        otp = [o for o in otp if o != '000000']
+        
+        return otp[0] if otp else None
+    
+    def wait_for_otp(self, email_address: str, timeout: int = 120, interval: int = 2) -> Optional[str]:
+        """
+        Chờ và lấy OTP từ email mới
+        
+        Args:
+            email_address: Địa chỉ email
+            timeout: Thời gian chờ tối đa (giây)
+            interval: Khoảng thời gian giữa các lần check (giây)
+            
+        Returns:
+            str: Mã OTP hoặc None nếu timeout
+        """
+        import time
+        
+        start_time = time.time()
+        
+        # Lấy số email hiện có để so sánh
+        existing_emails = self.get_all_emails(email_address)
+        last_count = len(existing_emails) if existing_emails else 0
+        
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed >= timeout:
+                return None
+            
+            # Check email mới
+            emails = self.get_all_emails(email_address)
+            current_count = len(emails) if emails else 0
+            
+            if current_count > last_count:
+                # Có email mới - tìm OTP
+                new_email = emails[0]
+                otp = self.find_otp(new_email)
+                if otp:
+                    return otp
+            
+            time.sleep(interval)
+        
+        return None
+    
+    def get_otp_from_latest(self, email_address: str) -> Optional[str]:
+        """
+        Lấy OTP từ email mới nhất (không chờ)
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            str: Mã OTP hoặc None
+        """
+        email_data = self.get_latest_email(email_address)
+        if email_data:
+            return self.find_otp(email_data)
+        return None
+    
+    def get_emails(self, email_address: str) -> List[Dict[str, Any]]:
+        """
+        Alias cho get_all_emails để tương thích với TempMailClient
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            list: Danh sách email (đã format lại cho tương thích)
+        """
+        emails = self.get_all_emails(email_address)
+        
+        # Convert format để tương thích với code cũ
+        formatted = []
+        for e in emails:
+            formatted.append({
+                'from': e.get('f', 'Unknown'),
+                'to': email_address,
+                'subject': e.get('s', 'No Subject'),
+                'textBody': e.get('b', ''),
+                'timestamp': e.get('t', 0),
+                '_raw': e  # Giữ data gốc để tìm OTP
+            })
+        
+        return formatted
+    
+    @staticmethod
+    def is_worker_email(email_address: str) -> bool:
+        """
+        Kiểm tra email có phải domain của Worker không
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            bool: True nếu là email Worker
+        """
+        return email_address.endswith(f"@{EmailWorkerClient.EMAIL_DOMAIN}")
+
+
+def get_email_client(email_address: str, tempmail_email: str = None, tempmail_password: str = None):
+    """
+    Factory function để lấy client phù hợp dựa trên domain email
+    
+    Args:
+        email_address: Địa chỉ email cần check
+        tempmail_email: Email đăng nhập TempMail.fish (cho Premium)
+        tempmail_password: Password TempMail.fish
+        
+    Returns:
+        TempMailClient hoặc EmailWorkerClient
+    """
+    if EmailWorkerClient.is_worker_email(email_address):
+        return EmailWorkerClient()
+    else:
+        return TempMailClient(email=tempmail_email, password=tempmail_password)

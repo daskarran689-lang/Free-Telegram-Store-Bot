@@ -1930,8 +1930,9 @@ def detect_otp_type(subject, text_body):
     return "🔑 Mã xác thực Canva"
 
 def get_otp_for_email(user_id, email, lang):
-    """Get OTP from TempMail for a specific email"""
+    """Get OTP from TempMail or EmailWorker for a specific email"""
     import time as time_module
+    from tempmail_client import EmailWorkerClient
     
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
@@ -1968,6 +1969,65 @@ def get_otp_for_email(user_id, email, lang):
     keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
     
     try:
+        # Check if email is from EmailWorker domain
+        if EmailWorkerClient.is_worker_email(email):
+            # Use EmailWorkerClient for dlndaiiii.indevs.in domain
+            logger.info(f"Using EmailWorkerClient for {email}")
+            worker_client = EmailWorkerClient()
+            
+            # Get all emails
+            emails_raw = worker_client.get_all_emails(email)
+            
+            if emails_raw:
+                # Find OTP in emails (newest first - already sorted by API)
+                otp_found = False
+                for mail_data in emails_raw:
+                    otp_code = worker_client.find_otp(mail_data)
+                    if otp_code:
+                        subject = mail_data.get('s', 'No Subject')
+                        timestamp = mail_data.get('t', 0)
+                        from datetime import datetime
+                        mail_time = datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M:%S %d/%m/%Y') if timestamp else "N/A"
+                        
+                        msg = f"✅ 🔑 Mã xác thực Canva:\n\n"
+                        msg += f"🔢 *{otp_code}*\n\n"
+                        msg += f"📧 Email: {email}\n"
+                        msg += f"📋 Tiêu đề: {subject[:50]}{'...' if len(subject) > 50 else ''}\n"
+                        msg += f"🕐 Nhận lúc: {mail_time}\n"
+                        msg += f"⏰ Mã có hiệu lực trong vài phút"
+                        
+                        try:
+                            bot.delete_message(user_id, loading_msg.message_id)
+                        except:
+                            pass
+                        bot.send_message(user_id, msg, reply_markup=keyboard, parse_mode="Markdown")
+                        otp_found = True
+                        break
+                
+                if not otp_found:
+                    # Show latest email
+                    latest = emails_raw[0]
+                    subject = latest.get('s', 'No Subject')
+                    sender = latest.get('f', 'Unknown')
+                    timestamp = latest.get('t', 0)
+                    from datetime import datetime
+                    mail_time = datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M:%S %d/%m/%Y') if timestamp else "N/A"
+                    
+                    msg = f"📬 Email mới nhất ({mail_time}):\n\nTừ: {sender}\nTiêu đề: {subject}\n\n❌ Không tìm thấy mã OTP trong email này."
+                    try:
+                        bot.delete_message(user_id, loading_msg.message_id)
+                    except:
+                        pass
+                    bot.send_message(user_id, msg, reply_markup=keyboard)
+            else:
+                try:
+                    bot.delete_message(user_id, loading_msg.message_id)
+                except:
+                    pass
+                bot.send_message(user_id, "📭 Chưa có email mới. Vui lòng yêu cầu mã xác thực trên Canva rồi bấm lại nút.", reply_markup=keyboard)
+            return
+        
+        # Use TempMail.fish for other domains
         # Use Premium login if credentials available, otherwise fallback to authkey
         if TEMPMAIL_EMAIL and TEMPMAIL_PASSWORD:
             client = TempMailClient(email=TEMPMAIL_EMAIL, password=TEMPMAIL_PASSWORD)
