@@ -1985,6 +1985,8 @@ def get_otp_for_email(user_id, email, lang):
                     otp_code = worker_client.find_otp(mail_data)
                     if otp_code:
                         subject = mail_data.get('s', 'No Subject')
+                        # Escape Markdown characters
+                        subject_safe = subject.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")[:50]
                         timestamp = mail_data.get('t', 0)
                         from datetime import datetime
                         mail_time = datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M:%S %d/%m/%Y') if timestamp else "N/A"
@@ -1992,7 +1994,7 @@ def get_otp_for_email(user_id, email, lang):
                         msg = f"✅ 🔑 Mã xác thực Canva:\n\n"
                         msg += f"🔢 *{otp_code}*\n\n"
                         msg += f"📧 Email: {email}\n"
-                        msg += f"📋 Tiêu đề: {subject[:50]}{'...' if len(subject) > 50 else ''}\n"
+                        msg += f"📋 Tiêu đề: {subject_safe}{'...' if len(subject) > 50 else ''}\n"
                         msg += f"🕐 Nhận lúc: {mail_time}\n"
                         msg += f"⏰ Mã có hiệu lực trong vài phút"
                         
@@ -2000,7 +2002,11 @@ def get_otp_for_email(user_id, email, lang):
                             bot.delete_message(user_id, loading_msg.message_id)
                         except:
                             pass
-                        bot.send_message(user_id, msg, reply_markup=keyboard, parse_mode="Markdown")
+                        try:
+                            bot.send_message(user_id, msg, reply_markup=keyboard, parse_mode="Markdown")
+                        except:
+                            # Fallback without parse_mode
+                            bot.send_message(user_id, msg.replace("*", ""), reply_markup=keyboard)
                         otp_found = True
                         break
                 
