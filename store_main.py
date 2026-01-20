@@ -1989,7 +1989,11 @@ def get_otp_for_email(user_id, email, lang):
                         subject_safe = subject.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")[:50]
                         timestamp = mail_data.get('t', 0)
                         from datetime import datetime
-                        mail_time = datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M:%S %d/%m/%Y') if timestamp else "N/A"
+                        # Convert to UTC+7
+                        if timestamp:
+                            mail_time = datetime.fromtimestamp(timestamp / 1000, tz=VN_TIMEZONE).strftime('%H:%M:%S %d/%m/%Y')
+                        else:
+                            mail_time = "N/A"
                         
                         msg = f"✅ 🔑 Mã xác thực Canva:\n\n"
                         msg += f"🔢 *{otp_code}*\n\n"
@@ -2017,7 +2021,11 @@ def get_otp_for_email(user_id, email, lang):
                     sender = latest.get('f', 'Unknown')
                     timestamp = latest.get('t', 0)
                     from datetime import datetime
-                    mail_time = datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M:%S %d/%m/%Y') if timestamp else "N/A"
+                    # Convert to UTC+7
+                    if timestamp:
+                        mail_time = datetime.fromtimestamp(timestamp / 1000, tz=VN_TIMEZONE).strftime('%H:%M:%S %d/%m/%Y')
+                    else:
+                        mail_time = "N/A"
                     
                     msg = f"📬 Email mới nhất ({mail_time}):\n\nTừ: {sender}\nTiêu đề: {subject}\n\n❌ Không tìm thấy mã OTP trong email này."
                     try:
