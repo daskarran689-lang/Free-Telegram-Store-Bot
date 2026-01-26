@@ -450,8 +450,10 @@ def callback_query(call):
                 bot.send_message(user_id, "❌ *Không tìm thấy tài khoản*\n_Bạn chưa mua tài khoản Canva nào_", reply_markup=create_main_keyboard(lang, user_id), parse_mode='Markdown')
             return
         elif call.data.startswith("buy_qty_"):
-            # Handle inline buy quantity button
-            quantity = int(call.data.replace('buy_qty_', ''))
+            # Handle inline buy quantity button (with warranty type)
+            parts = call.data.replace('buy_qty_', '').split('_')
+            quantity = int(parts[0])
+            warranty_type = parts[1] if len(parts) > 1 else "kbh"
             bot.answer_callback_query(call.id, f"Đang xử lý mua {quantity} tài khoản...")
             # Simulate clicking the buy button
             fake_message = type('obj', (object,), {
@@ -459,7 +461,25 @@ def callback_query(call):
                 'chat': call.message.chat,
                 'text': f"🛒 Mua ({quantity})"
             })()
-            handle_buy_with_quantity(fake_message)
+            handle_buy_with_quantity(fake_message, warranty_type)
+            return
+        elif call.data.startswith("warranty_"):
+            # Handle warranty type selection
+            warranty_type = call.data.replace('warranty_', '')
+            bot.answer_callback_query(call.id, f"Đã chọn {'BH 3 tháng' if warranty_type == 'bh3' else 'Không bảo hành'}")
+            # Show quantity selection for this warranty type
+            show_quantity_selection(user_id, warranty_type, lang)
+            return
+        elif call.data == "upgrade_canva":
+            # Handle "Up lại Canva Edu" selection
+            bot.answer_callback_query(call.id, "Đang xử lý...")
+            show_upgrade_canva_options(user_id, lang)
+            return
+        elif call.data.startswith("upgrade_"):
+            # Handle upgrade warranty type selection
+            warranty_type = call.data.replace('upgrade_', '')
+            bot.answer_callback_query(call.id, f"Đang xử lý Up lại Canva Edu...")
+            process_upgrade_canva_order(user_id, call.from_user.username or "user", warranty_type, lang)
             return
         elif call.data.startswith("confirm_order_"):
             # Admin confirms bank transfer order
@@ -608,6 +628,11 @@ def callback_query(call):
             except Exception as e:
                 logger.error(f"Cancel order error: {e}")
                 bot.answer_callback_query(call.id, f"Error: {e}")
+            return
+        elif call.data == "back_to_warranty":
+            # Go back to warranty type selection
+            bot.answer_callback_query(call.id, "Quay lại...")
+            UserOperations.shop_items(call.message)
             return
         elif call.data.startswith("getcats_"):
             input_catees = call.data.replace('getcats_','')
@@ -2192,9 +2217,216 @@ def is_category_button(text):
 def is_buy_button(text):
     return text.startswith("🛒 Mua (") and text.endswith(")")
 
+# Check if message is warranty type button
+def is_warranty_button(text):
+    return text in ["🛡 Mua BH 3 tháng", "⚡ Mua KBH"]
+
+# Check if message is upgrade canva button
+def is_upgrade_button(text):
+    return text == "♻️ Up lại Canva Edu"
+
+# Show quantity selection for warranty type
+def show_quantity_selection(user_id, warranty_type, lang):
+    """Show quantity selection buttons for selected warranty type"""
+    warranty_label = "BH 3 tháng" if warranty_type == "bh3" else "KBH"
+    
+    inline_kb = types.InlineKeyboardMarkup(row_width=2)
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛒 Mua (1)", callback_data=f"buy_qty_1_{warranty_type}"),
+        types.InlineKeyboardButton(text="🛒 Mua (2)", callback_data=f"buy_qty_2_{warranty_type}")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛒 Mua (3)", callback_data=f"buy_qty_3_{warranty_type}"),
+        types.InlineKeyboardButton(text="🛒 Mua (5)", callback_data=f"buy_qty_5_{warranty_type}")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛒 Mua (10)", callback_data=f"buy_qty_10_{warranty_type}"),
+        types.InlineKeyboardButton(text="🛒 Mua (20)", callback_data=f"buy_qty_20_{warranty_type}")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛒 Mua (50)", callback_data=f"buy_qty_50_{warranty_type}"),
+        types.InlineKeyboardButton(text="🛒 Mua (100)", callback_data=f"buy_qty_100_{warranty_type}")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_warranty")
+    )
+    
+    # Get price info for this warranty type
+    if warranty_type == "bh3":
+        price_info = "💰 Bảng giá BH 3 tháng:\n• 1-9 acc: 100K/acc\n• ≥10 acc: 50K/acc\n• ≥50 acc: 25K/acc"
+    else:
+        price_info = "💰 Bảng giá KBH:\n• 1-9 acc: 40K/acc\n• ≥10 acc: 20K/acc\n• ≥50 acc: 10K/acc"
+    
+    msg = f"🛡 <b>Đã chọn: {warranty_label}</b>\n\n{price_info}\n\n👇 Chọn số lượng muốn mua:"
+    bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+
+# Show upgrade canva options
+def show_upgrade_canva_options(user_id, lang):
+    """Show warranty options for 'Up lại Canva Edu' service"""
+    inline_kb = types.InlineKeyboardMarkup(row_width=1)
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 120K", callback_data="upgrade_bh3")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="⚡ KBH - 50K", callback_data="upgrade_kbh")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_warranty")
+    )
+    
+    msg = "♻️ <b>UP LẠI CANVA EDU ADMIN</b>\n"
+    msg += "━━━━━━━━━━━━━━\n"
+    msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên team/design</i>\n\n"
+    msg += "💰 <b>Bảng giá:</b>\n"
+    msg += "• KBH: 50K\n"
+    msg += "• BH 3 tháng: 120K\n\n"
+    msg += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công, vui lòng inbox Admin:\n"
+    msg += "• Mã đơn hàng\n"
+    msg += "• Tài khoản Canva\n"
+    msg += "• Mật khẩu (nếu có)\n"
+    msg += "• Cung cấp mã xác thực khi Admin yêu cầu\n\n"
+    msg += "👇 Chọn loại bảo hành:"
+    bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+
+# Process upgrade canva order
+def process_upgrade_canva_order(user_id, username, warranty_type, lang):
+    """Process 'Up lại Canva Edu' order"""
+    price = calculate_upgrade_price(warranty_type)
+    warranty_label = "BH 3 tháng" if warranty_type == "bh3" else "KBH"
+    product_name = f"Up lại Canva Edu ({warranty_label})"
+    
+    # Get bank config
+    bank_cfg = get_bank_config()
+    if not bank_cfg["bank_code"] or not bank_cfg["account_number"]:
+        bot.send_message(user_id, get_text("bank_not_setup", lang), reply_markup=create_main_keyboard(lang, user_id))
+        return
+    
+    # Send loading photo first
+    loading_img = "https://files.catbox.moe/yicj8r.jpg"
+    try:
+        loading_msg = bot.send_photo(user_id, loading_img, caption="⏳ Đang xử lý...")
+    except Exception as e:
+        logger.warning(f"Failed to send loading photo: {e}")
+        loading_msg = bot.send_message(user_id, "⏳ Đang xử lý...")
+    
+    try:
+        ordernumber = random.randint(10000, 99999)
+        transfer_content = f"UP{ordernumber}"
+        
+        now = datetime.now(VN_TIMEZONE)
+        orderdate = now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Save to pending_orders_info
+        pending_orders_info[ordernumber] = {
+            "user_id": user_id,
+            "username": username,
+            "product_name": product_name,
+            "price": price,
+            "quantity": 1,
+            "product_number": "UPGRADE",
+            "orderdate": orderdate,
+            "download_link": "",
+            "transfer_content": transfer_content,
+            "is_upgrade": True,
+            "warranty_type": warranty_type
+        }
+        
+        # Notify admin about new pending order
+        admins = GetDataFromDB.GetAdminIDsInDB() or []
+        admin_msg_ids = []
+        for admin in admins:
+            try:
+                admin_msg = f"♻️ *Đơn UP LẠI CANVA đang chờ thanh toán*\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{username}\n"
+                admin_msg += f"📦 Sản phẩm: {product_name}\n"
+                admin_msg += f"💰 Số tiền: {price:,} VND\n"
+                admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"📝 _Sau khi thanh toán, khách sẽ inbox thông tin tài khoản Canva_"
+                sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                admin_msg_ids.append({"chat_id": admin[0], "message_id": sent.message_id})
+            except:
+                pass
+        pending_admin_messages[ordernumber] = admin_msg_ids
+        
+        # Try PayOS first
+        payos_result = create_payos_payment_link(ordernumber, price, transfer_content, username)
+        
+        if payos_result and payos_result.get("accountNumber"):
+            checkout_url = payos_result.get("checkoutUrl", "")
+            payos_account = payos_result.get("accountNumber", "")
+            payos_name = payos_result.get("accountName", "")
+            payos_bin = payos_result.get("bin", "")
+            
+            import urllib.parse
+            qr_url = f"https://img.vietqr.io/image/{payos_bin}-{payos_account}-compact2.png"
+            params = {
+                "amount": int(price),
+                "addInfo": transfer_content,
+                "accountName": payos_name
+            }
+            qr_url = f"{qr_url}?{urllib.parse.urlencode(params)}"
+            
+            msg = f"📱 <b>QUÉT MÃ QR ĐỂ THANH TOÁN</b>\n\n"
+            msg += f"🏦 Ngân hàng: <b>MB Bank</b>\n"
+            msg += f"💳 Số TK: <code>{payos_account}</code>\n"
+            msg += f"👤 Chủ TK: <b>{payos_name}</b>\n"
+            msg += f"💰 Số tiền: <b>{price:,} VND</b>\n"
+            msg += f"📝 Nội dung: <code>{transfer_content}</code>\n\n"
+            msg += f"⏳ Mã đơn hàng: <code>{ordernumber}</code>\n\n"
+            msg += f"━━━━━━━━━━━━━━\n"
+            msg += f"📌 <b>SAU KHI THANH TOÁN THÀNH CÔNG:</b>\n"
+            msg += f"Vui lòng inbox Admin kèm:\n"
+            msg += f"• Mã đơn hàng: <code>{ordernumber}</code>\n"
+            msg += f"• Tài khoản Canva của bạn\n"
+            msg += f"• Mật khẩu (nếu có)\n"
+            msg += f"• Cung cấp mã xác thực khi Admin yêu cầu"
+        else:
+            qr_url = generate_vietqr_url(
+                bank_cfg["bank_code"],
+                bank_cfg["account_number"],
+                bank_cfg["account_name"],
+                price,
+                transfer_content
+            )
+            msg = f"📱 <b>QUÉT MÃ QR ĐỂ THANH TOÁN</b>\n\n"
+            msg += f"🏦 Ngân hàng: <b>{bank_cfg['bank_code']}</b>\n"
+            msg += f"💳 Số TK: <code>{bank_cfg['account_number']}</code>\n"
+            msg += f"👤 Chủ TK: <b>{bank_cfg['account_name']}</b>\n"
+            msg += f"💰 Số tiền: <b>{price:,} VND</b>\n"
+            msg += f"📝 Nội dung: <code>{transfer_content}</code>\n\n"
+            msg += f"⏳ Mã đơn hàng: <code>{ordernumber}</code>\n\n"
+            msg += f"━━━━━━━━━━━━━━\n"
+            msg += f"📌 <b>SAU KHI THANH TOÁN THÀNH CÔNG:</b>\n"
+            msg += f"Vui lòng inbox Admin kèm:\n"
+            msg += f"• Mã đơn hàng: <code>{ordernumber}</code>\n"
+            msg += f"• Tài khoản Canva của bạn\n"
+            msg += f"• Mật khẩu (nếu có)\n"
+            msg += f"• Cung cấp mã xác thực khi Admin yêu cầu"
+        
+        inline_kb = types.InlineKeyboardMarkup()
+        inline_kb.add(types.InlineKeyboardButton(
+            text=get_text("cancel_order", lang),
+            callback_data=f"cancel_order_{ordernumber}"
+        ))
+        
+        try:
+            media = types.InputMediaPhoto(qr_url, caption=msg, parse_mode='HTML')
+            bot.edit_message_media(media, chat_id=user_id, message_id=loading_msg.message_id, reply_markup=inline_kb)
+            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": loading_msg.message_id}
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
+            
+    except Exception as e:
+        logger.error(f"Error processing upgrade order: {e}")
+        bot.send_message(user_id, f"❌ Lỗi: {e}", reply_markup=create_main_keyboard(lang, user_id))
+
 # Handler for buy button with quantity
 @bot.message_handler(content_types=["text"], func=lambda message: is_buy_button(message.text))
-def handle_buy_with_quantity(message):
+def handle_buy_with_quantity(message, warranty_type="kbh"):
     """Handle buy button press with quantity"""
     id = message.from_user.id
     lang = get_user_lang(id)
@@ -2220,10 +2452,30 @@ def handle_buy_with_quantity(message):
         
         # Create order data with quantity
         order_data = [productnumber, pname, productprice, productdescription, productimagelink, productdownloadlink, canva_stock, productcategory]
-        # Process bank transfer with quantity
-        process_bank_transfer_order(id, username, order_data, lang, quantity)
+        # Process bank transfer with quantity and warranty type
+        process_bank_transfer_order(id, username, order_data, lang, quantity, warranty_type)
     else:
         bot.send_message(id, "Không có sản phẩm!", reply_markup=create_main_keyboard(lang, id))
+
+# Handler for warranty type button
+@bot.message_handler(content_types=["text"], func=lambda message: is_warranty_button(message.text))
+def handle_warranty_button(message):
+    """Handle warranty type button press"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if message.text == "🛡 Mua BH 3 tháng":
+        show_quantity_selection(id, "bh3", lang)
+    else:  # "⚡ Mua KBH"
+        show_quantity_selection(id, "kbh", lang)
+
+# Handler for upgrade canva button
+@bot.message_handler(content_types=["text"], func=lambda message: is_upgrade_button(message.text))
+def handle_upgrade_button(message):
+    """Handle upgrade canva button press"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    show_upgrade_canva_options(id, lang)
 
 #Command handler and fucntion to shop Items
 @bot.message_handler(commands=['buy'])
@@ -2441,33 +2693,85 @@ def parse_price(price_str):
         return 0
 
 
-# Pricing tiers based on quantity
-# 40K/1 | ≥10: 20K | ≥50: 10K
-def calculate_price_by_quantity(quantity):
-    """Calculate unit price based on quantity tiers
+# Pricing tiers based on quantity and warranty type
+# BH 3 tháng: 100K/1 | ≥10: 50K | ≥50: 25K
+# KBH (không bảo hành): 40K/1 | ≥10: 20K | ≥50: 10K
+# Up lại Canva Edu Admin: KBH 50K | BH 3 tháng 120K
+
+def calculate_price_by_quantity(quantity, warranty_type="kbh"):
+    """Calculate unit price based on quantity tiers and warranty type
+    warranty_type: "bh3" (bảo hành 3 tháng) or "kbh" (không bảo hành)
+    
+    BH 3 tháng:
+    - Default: 100,000 VND per item
+    - ≥10 items: 50,000 VND per item
+    - ≥50 items: 25,000 VND per item
+    
+    KBH (không bảo hành):
     - Default: 40,000 VND per item
     - ≥10 items: 20,000 VND per item
     - ≥50 items: 10,000 VND per item
+    
     Returns: (unit_price, total_price)
     """
-    if quantity >= 50:
-        unit_price = 10000
-    elif quantity >= 10:
-        unit_price = 20000
-    else:
-        unit_price = 40000
+    if warranty_type == "bh3":
+        if quantity >= 50:
+            unit_price = 25000
+        elif quantity >= 10:
+            unit_price = 50000
+        else:
+            unit_price = 100000
+    else:  # kbh - không bảo hành
+        if quantity >= 50:
+            unit_price = 10000
+        elif quantity >= 10:
+            unit_price = 20000
+        else:
+            unit_price = 40000
     
     total_price = unit_price * quantity
     return unit_price, total_price
 
 
+def calculate_upgrade_price(warranty_type="kbh"):
+    """Calculate price for 'Up lại Canva Edu Admin' service
+    warranty_type: "bh3" (bảo hành 3 tháng) or "kbh" (không bảo hành)
+    
+    KBH: 50,000 VND
+    BH 3 tháng: 120,000 VND
+    
+    Returns: price
+    """
+    if warranty_type == "bh3":
+        return 120000
+    else:  # kbh
+        return 50000
+
+
 def get_price_tier_text():
     """Get price tier description for display"""
-    return "💰 Bảng giá:\n• 1-9 acc: 40K/acc\n• 10-49 acc: 20K/acc\n• 50+ acc: 10K/acc"
+    text = "⚡ <b>CANVA EDU ADMIN</b> ⚡\n"
+    text += "🎓 Full quyền 500 slot – hạn 3 năm\n\n"
+    text += "💰 <b>Bảng giá:</b>\n"
+    text += "━━━━━━━━━━━━━━\n"
+    text += "🛡 <b>BH 3 tháng:</b>\n"
+    text += "• 1-9 acc: 100K/acc\n"
+    text += "• ≥10 acc: 50K/acc\n"
+    text += "• ≥50 acc: 25K/acc\n\n"
+    text += "⚡ <b>KBH (Không bảo hành):</b>\n"
+    text += "• 1-9 acc: 40K/acc\n"
+    text += "• ≥10 acc: 20K/acc\n"
+    text += "• ≥50 acc: 10K/acc\n"
+    text += "━━━━━━━━━━━━━━\n"
+    text += "♻️ <b>UP LẠI CANVA EDU</b>\n"
+    text += "<i>(bị mất gói - giữ nguyên team/design)</i>\n"
+    text += "• KBH: 50K\n"
+    text += "• BH 3 tháng: 120K"
+    return text
 
 
 # Process bank transfer order (reusable function)
-def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1):
+def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1, warranty_type="kbh"):
     """Process bank transfer and show QR code"""
     
     if int(f"{order_info[6]}") < quantity:
@@ -2489,15 +2793,16 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
         loading_msg = bot.send_message(user_id, "⏳ Đang xử lý...")
     
     try:
-        # Calculate price based on quantity tiers (40K/1 | ≥10: 20K | ≥50: 10K)
-        unit_price, amount = calculate_price_by_quantity(quantity)
+        # Calculate price based on quantity tiers and warranty type
+        unit_price, amount = calculate_price_by_quantity(quantity, warranty_type)
         ordernumber = random.randint(10000, 99999)
         transfer_content = f"DH{ordernumber}"
         
         # Store order info in memory (NOT in database yet - only save after payment confirmed)
         now = datetime.now(VN_TIMEZONE)
         orderdate = now.strftime("%Y-%m-%d %H:%M:%S")
-        product_name_with_qty = f"{order_info[1]} x{quantity}" if quantity > 1 else order_info[1]
+        warranty_label = "BH3" if warranty_type == "bh3" else "KBH"
+        product_name_with_qty = f"{order_info[1]} ({warranty_label}) x{quantity}" if quantity > 1 else f"{order_info[1]} ({warranty_label})"
         productdownloadlink = GetDataFromDB.GetProductDownloadLink(order_info[0])
         
         # Save to pending_orders_info instead of database
@@ -2510,7 +2815,8 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
             "product_number": order_info[0],
             "orderdate": orderdate,
             "download_link": productdownloadlink,
-            "transfer_content": transfer_content
+            "transfer_content": transfer_content,
+            "warranty_type": warranty_type
         }
         
         # Store quantity for later use when confirming order
@@ -2526,6 +2832,7 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1)
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
                 admin_msg += f"👤 Khách: @{username}\n"
                 admin_msg += f"📦 Sản phẩm: {product_name_with_qty}\n"
+                admin_msg += f"� SLoại: {'BH 3 tháng' if warranty_type == 'bh3' else 'Không bảo hành'}\n"
                 admin_msg += f"💰 Số tiền: {amount:,} VND\n"
                 admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
                 sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
