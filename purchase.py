@@ -55,7 +55,7 @@ class UserOperations:
             # Gửi message với inline keyboard
             bot.send_message(id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
             # Gửi message với reply keyboard và lưu message_id
-            reply_msg = bot.send_message(id, "⌨️", reply_markup=nav_keyboard)
+            reply_msg = bot.send_message(id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=nav_keyboard)
             # Lưu message_id để sau xóa và gửi lại
             from store_main import pending_reply_keyboard_messages
             pending_reply_keyboard_messages[id] = {"chat_id": id, "message_id": reply_msg.message_id}

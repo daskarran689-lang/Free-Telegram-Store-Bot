@@ -2274,7 +2274,7 @@ def update_reply_keyboard(user_id, reply_markup):
         except:
             pass
     # Send new message with reply keyboard
-    reply_msg = bot.send_message(user_id, "⌨️", reply_markup=reply_markup)
+    reply_msg = bot.send_message(user_id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=reply_markup)
     pending_reply_keyboard_messages[user_id] = {"chat_id": user_id, "message_id": reply_msg.message_id}
 
 # Show Canva Edu Admin product details
@@ -2306,6 +2306,15 @@ def show_canva_product_details(user_id, lang, chat_id=None, message_id=None):
             bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
     else:
         bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+    
+    # Update reply keyboard
+    nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    nav_keyboard.row(
+        types.KeyboardButton(text="🛡 BH 3 tháng"),
+        types.KeyboardButton(text="⚡ KBH")
+    )
+    nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+    update_reply_keyboard(user_id, nav_keyboard)
 
 # Show Up lại Canva Edu product details
 def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
@@ -2342,6 +2351,15 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
             bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
     else:
         bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+    
+    # Update reply keyboard
+    nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    nav_keyboard.row(
+        types.KeyboardButton(text="🛡 BH 3 tháng - 120K"),
+        types.KeyboardButton(text="⚡ KBH - 50K")
+    )
+    nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+    update_reply_keyboard(user_id, nav_keyboard)
 
 # Show quantity selection for warranty type
 def show_quantity_selection(user_id, warranty_type, lang, chat_id=None, message_id=None):
@@ -2385,6 +2403,19 @@ def show_quantity_selection(user_id, warranty_type, lang, chat_id=None, message_
             bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
     else:
         bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+    
+    # Update reply keyboard - show quantity buttons
+    nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    nav_keyboard.row(
+        types.KeyboardButton(text="🛒 Mua (1)"),
+        types.KeyboardButton(text="🛒 Mua (5)")
+    )
+    nav_keyboard.row(
+        types.KeyboardButton(text="🛒 Mua (10)"),
+        types.KeyboardButton(text="🛒 Mua (50)")
+    )
+    nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+    update_reply_keyboard(user_id, nav_keyboard)
 
 # Show upgrade canva options
 def show_upgrade_canva_options(user_id, lang):
