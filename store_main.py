@@ -2274,12 +2274,17 @@ def update_reply_keyboard(user_id, reply_markup):
     if user_id in pending_reply_keyboard_messages:
         try:
             msg_info = pending_reply_keyboard_messages[user_id]
+            logger.info(f"Deleting reply keyboard message: chat_id={msg_info['chat_id']}, message_id={msg_info['message_id']}")
             bot.delete_message(msg_info["chat_id"], msg_info["message_id"])
-        except:
-            pass
+            logger.info(f"Deleted successfully")
+        except Exception as e:
+            logger.error(f"Failed to delete reply keyboard message: {e}")
+    else:
+        logger.info(f"No pending reply keyboard message for user {user_id}")
     # Send new message with reply keyboard
     reply_msg = bot.send_message(user_id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=reply_markup)
     pending_reply_keyboard_messages[user_id] = {"chat_id": user_id, "message_id": reply_msg.message_id}
+    logger.info(f"Saved new reply keyboard message: user_id={user_id}, message_id={reply_msg.message_id}")
 
 # Show Canva Edu Admin product details
 def show_canva_product_details(user_id, lang, chat_id=None, message_id=None):
