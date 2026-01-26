@@ -54,11 +54,9 @@ class UserOperations:
             
             # Gửi message với inline keyboard
             bot.send_message(id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
-            # Gửi message với reply keyboard và lưu message_id
-            reply_msg = bot.send_message(id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=nav_keyboard)
-            # Lưu message_id để sau xóa và gửi lại
+            # Gửi message với reply keyboard và lưu message_id qua hàm update
             import store_main
-            store_main.pending_reply_keyboard_messages[id] = {"chat_id": id, "message_id": reply_msg.message_id}
+            store_main.init_reply_keyboard(id, nav_keyboard)
 
     #@bot.callback_query_handler(func=lambda call: True)
     def callback_query(call):

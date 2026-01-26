@@ -2267,6 +2267,13 @@ def is_product_selection_button(text):
 # Format: {user_id: {"chat_id": chat_id, "message_id": message_id}}
 pending_reply_keyboard_messages = {}
 
+# Helper function to initialize reply keyboard message (first time, no delete)
+def init_reply_keyboard(user_id, reply_markup):
+    """Send reply keyboard message and save message_id (for first time)"""
+    reply_msg = bot.send_message(user_id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=reply_markup)
+    pending_reply_keyboard_messages[user_id] = {"chat_id": user_id, "message_id": reply_msg.message_id}
+    logger.info(f"Init reply keyboard message: user_id={user_id}, message_id={reply_msg.message_id}")
+
 # Helper function to update reply keyboard message
 def update_reply_keyboard(user_id, reply_markup):
     """Delete old reply keyboard message and send new one"""
