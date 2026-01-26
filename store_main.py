@@ -449,6 +449,16 @@ def callback_query(call):
             else:
                 bot.send_message(user_id, "❌ *Không tìm thấy tài khoản*\n_Bạn chưa mua tài khoản Canva nào_", reply_markup=create_main_keyboard(lang, user_id), parse_mode='Markdown')
             return
+        elif call.data == "product_canva":
+            # Handle Canva Edu Admin product selection - show warranty options
+            bot.answer_callback_query(call.id, "Đang xử lý...")
+            show_canva_product_details(user_id, lang)
+            return
+        elif call.data == "product_upgrade":
+            # Handle Up lại Canva Edu product selection - show warranty options
+            bot.answer_callback_query(call.id, "Đang xử lý...")
+            show_upgrade_product_details(user_id, lang)
+            return
         elif call.data.startswith("buy_qty_"):
             # Handle inline buy quantity button (with warranty type)
             parts = call.data.replace('buy_qty_', '').split('_')
@@ -630,9 +640,17 @@ def callback_query(call):
                 bot.answer_callback_query(call.id, f"Error: {e}")
             return
         elif call.data == "back_to_warranty":
-            # Go back to warranty type selection
+            # Go back to product selection menu
             bot.answer_callback_query(call.id, "Quay lại...")
-            UserOperations.shop_items(call.message)
+            # Show product selection menu (same as /buy)
+            inline_kb = types.InlineKeyboardMarkup(row_width=1)
+            inline_kb.row(
+                types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
+            )
+            inline_kb.row(
+                types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
+            )
+            bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
             return
         elif call.data.startswith("getcats_"):
             input_catees = call.data.replace('getcats_','')
@@ -2225,6 +2243,54 @@ def is_warranty_button(text):
 def is_upgrade_button(text):
     return text == "♻️ Up lại Canva Edu"
 
+# Check if message is product selection button (from /buy menu)
+def is_product_selection_button(text):
+    return text in ["🛍 Canva Edu Admin", "♻️ Up lại Canva Edu"]
+
+# Show Canva Edu Admin product details
+def show_canva_product_details(user_id, lang):
+    """Show Canva Edu Admin product with warranty options"""
+    from InDMDevDB import CanvaAccountDB
+    canva_stock = CanvaAccountDB.get_account_count()
+    
+    inline_kb = types.InlineKeyboardMarkup(row_width=2)
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛡 BH 3 tháng", callback_data="warranty_bh3"),
+        types.InlineKeyboardButton(text="⚡ KBH", callback_data="warranty_kbh")
+    )
+    
+    price_tiers = "💰 <b>Bảng giá:</b>\n"
+    price_tiers += "• KBH: 40K/1 | ≥10: 20K | ≥50: 10K\n"
+    price_tiers += "• BH 3 tháng: 100K/1 | ≥10: 50K | ≥50: 25K"
+    
+    msg = f"🛍 <b>CANVA EDU ADMIN</b>\n\n📦 Còn: {canva_stock} tài khoản\n\n{price_tiers}\n\n👇 Chọn loại bảo hành:"
+    bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+
+# Show Up lại Canva Edu product details
+def show_upgrade_product_details(user_id, lang):
+    """Show Up lại Canva Edu product with warranty options"""
+    inline_kb = types.InlineKeyboardMarkup(row_width=1)
+    inline_kb.row(
+        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 120K", callback_data="upgrade_bh3")
+    )
+    inline_kb.row(
+        types.InlineKeyboardButton(text="⚡ KBH - 50K", callback_data="upgrade_kbh")
+    )
+    
+    msg = "♻️ <b>UP LẠI CANVA EDU ADMIN</b>\n"
+    msg += "━━━━━━━━━━━━━━\n"
+    msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên đội nhóm/team</i>\n\n"
+    msg += "💰 <b>Bảng giá:</b>\n"
+    msg += "• KBH: 50K\n"
+    msg += "• BH 3 tháng: 120K\n\n"
+    msg += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công, vui lòng inbox Admin:\n"
+    msg += "• Mã đơn hàng\n"
+    msg += "• Tài khoản Canva\n"
+    msg += "• Mật khẩu (nếu có)\n"
+    msg += "• Cung cấp mã xác thực khi Admin yêu cầu\n\n"
+    msg += "👇 Chọn loại bảo hành:"
+    bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+
 # Show quantity selection for warranty type
 def show_quantity_selection(user_id, warranty_type, lang):
     """Show quantity selection buttons for selected warranty type"""
@@ -2276,7 +2342,7 @@ def show_upgrade_canva_options(user_id, lang):
     
     msg = "♻️ <b>UP LẠI CANVA EDU ADMIN</b>\n"
     msg += "━━━━━━━━━━━━━━\n"
-    msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên team/design</i>\n\n"
+    msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên đội nhóm/team</i>\n\n"
     msg += "💰 <b>Bảng giá:</b>\n"
     msg += "• KBH: 50K\n"
     msg += "• BH 3 tháng: 120K\n\n"
@@ -2476,6 +2542,18 @@ def handle_upgrade_button(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     show_upgrade_canva_options(id, lang)
+
+# Handler for product selection button (from /buy menu)
+@bot.message_handler(content_types=["text"], func=lambda message: is_product_selection_button(message.text))
+def handle_product_selection_button(message):
+    """Handle product selection button press from /buy menu"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if message.text == "🛍 Canva Edu Admin":
+        show_canva_product_details(id, lang)
+    else:  # "♻️ Up lại Canva Edu"
+        show_upgrade_product_details(id, lang)
 
 #Command handler and fucntion to shop Items
 @bot.message_handler(commands=['buy'])
@@ -2764,7 +2842,7 @@ def get_price_tier_text():
     text += "• ≥50 acc: 10K/acc\n"
     text += "━━━━━━━━━━━━━━\n"
     text += "♻️ <b>UP LẠI CANVA EDU</b>\n"
-    text += "<i>(bị mất gói - giữ nguyên team/design)</i>\n"
+    text += "<i>(bị mất gói - giữ nguyên đội nhóm/team)</i>\n"
     text += "• KBH: 50K\n"
     text += "• BH 3 tháng: 120K"
     return text

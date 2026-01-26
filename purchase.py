@@ -35,76 +35,25 @@ class UserOperations:
             keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
             bot.send_message(id, get_text("no_product_store", lang), reply_markup=keyboard)
         else:
-            # Get actual Canva account count from database
-            from InDMDevDB import CanvaAccountDB
-            canva_stock = CanvaAccountDB.get_account_count()
-            
-            # ========== SẢN PHẨM 1: CANVA EDU ADMIN (MUA MỚI) ==========
-            inline_kb_canva = types.InlineKeyboardMarkup(row_width=2)
-            inline_kb_canva.row(
-                types.InlineKeyboardButton(text="🛡 BH 3 tháng", callback_data="warranty_bh3"),
-                types.InlineKeyboardButton(text="⚡ KBH", callback_data="warranty_kbh")
+            # Inline keyboard với 2 nút sản phẩm
+            inline_kb = types.InlineKeyboardMarkup(row_width=1)
+            inline_kb.row(
+                types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
+            )
+            inline_kb.row(
+                types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
             )
             
-            # Bảng giá Canva Edu Admin
-            price_tiers_canva = "💰 <b>Bảng giá:</b>\n"
-            price_tiers_canva += "━━━━━━━━━━━━━━\n"
-            price_tiers_canva += "🛡 <b>BH 3 tháng:</b>\n"
-            price_tiers_canva += "• 1-9 acc: 100K/acc\n"
-            price_tiers_canva += "• ≥10 acc: 50K/acc\n"
-            price_tiers_canva += "• ≥50 acc: 25K/acc\n\n"
-            price_tiers_canva += "⚡ <b>KBH (Không bảo hành):</b>\n"
-            price_tiers_canva += "• 1-9 acc: 40K/acc\n"
-            price_tiers_canva += "• ≥10 acc: 20K/acc\n"
-            price_tiers_canva += "• ≥50 acc: 10K/acc"
-            
-            # Show product 1 from database
-            for productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory in products_list:
-                caption_canva = f"🛍 <b>{productname}</b>\n\n📦 Còn: {canva_stock} tài khoản\n\n{price_tiers_canva}\n\n📝 {productdescription}"
-                caption_canva += "\n\n👇 Chọn loại bảo hành:"
-                try:
-                    bot.send_photo(id, photo=f"{productimagelink}", caption=caption_canva, reply_markup=inline_kb_canva, parse_mode='HTML')
-                except:
-                    bot.send_message(id, caption_canva, reply_markup=inline_kb_canva, parse_mode='HTML')
-                break  # Chỉ lấy sản phẩm đầu tiên
-            
-            # ========== SẢN PHẨM 2: UP LẠI CANVA EDU ==========
-            inline_kb_upgrade = types.InlineKeyboardMarkup(row_width=1)
-            inline_kb_upgrade.row(
-                types.InlineKeyboardButton(text="🛡 BH 3 tháng - 120K", callback_data="upgrade_bh3")
-            )
-            inline_kb_upgrade.row(
-                types.InlineKeyboardButton(text="⚡ KBH - 50K", callback_data="upgrade_kbh")
-            )
-            
-            # Bảng giá Up lại Canva Edu
-            caption_upgrade = "♻️ <b>UP LẠI CANVA EDU ADMIN</b>\n"
-            caption_upgrade += "━━━━━━━━━━━━━━\n"
-            caption_upgrade += "<i>Dành cho tài khoản bị mất gói - giữ nguyên team/design</i>\n\n"
-            caption_upgrade += "💰 <b>Bảng giá:</b>\n"
-            caption_upgrade += "• KBH: <b>50K</b>\n"
-            caption_upgrade += "• BH 3 tháng: <b>120K</b>\n\n"
-            caption_upgrade += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công:\n"
-            caption_upgrade += "📩 Inbox Admin kèm:\n"
-            caption_upgrade += "• Mã đơn hàng\n"
-            caption_upgrade += "• Tài khoản Canva\n"
-            caption_upgrade += "• Mật khẩu (nếu có)\n"
-            caption_upgrade += "• Cung cấp mã xác thực khi Admin yêu cầu"
-            caption_upgrade += "\n\n👇 Chọn loại bảo hành:"
-            
-            bot.send_message(id, caption_upgrade, reply_markup=inline_kb_upgrade, parse_mode='HTML')
-            
-            # Reply keyboard for navigation
+            # Reply keyboard với 2 nút sản phẩm
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
             nav_keyboard.row(
-                types.KeyboardButton(text="🛡 Mua BH 3 tháng"),
-                types.KeyboardButton(text="⚡ Mua KBH")
-            )
-            nav_keyboard.row(
+                types.KeyboardButton(text="🛍 Canva Edu Admin"),
                 types.KeyboardButton(text="♻️ Up lại Canva Edu")
             )
             nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
             
+            # Gửi message với inline keyboard
+            bot.send_message(id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
             # Set reply keyboard
             bot.send_message(id, "Hoặc bấm chọn ở menu bàn phím 👇", reply_markup=nav_keyboard)
 
