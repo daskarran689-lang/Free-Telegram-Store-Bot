@@ -2253,7 +2253,7 @@ def is_buy_button(text):
 
 # Check if message is warranty type button
 def is_warranty_button(text):
-    return text in ["🛡 Mua BH 3 tháng", "⚡ Mua KBH"]
+    return text in ["🛡 Mua BH 3 tháng", "⚡ Mua KBH", "🛡 BH 3 tháng", "⚡ KBH"]
 
 # Check if message is upgrade canva button
 def is_upgrade_button(text):
@@ -2637,9 +2637,9 @@ def handle_warranty_button(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     
-    if message.text == "🛡 Mua BH 3 tháng":
+    if message.text in ["🛡 Mua BH 3 tháng", "🛡 BH 3 tháng"]:
         show_quantity_selection(id, "bh3", lang)
-    else:  # "⚡ Mua KBH"
+    else:  # "⚡ Mua KBH" or "⚡ KBH"
         show_quantity_selection(id, "kbh", lang)
 
 # Handler for upgrade canva button
