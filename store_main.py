@@ -2259,6 +2259,10 @@ def is_warranty_button(text):
 def is_upgrade_button(text):
     return text == "♻️ Up lại Canva Edu"
 
+# Check if message is upgrade warranty button (for Up lại Canva Edu)
+def is_upgrade_warranty_button(text):
+    return text in ["🛡 BH 3 tháng - 120K", "⚡ KBH - 50K"]
+
 # Check if message is product selection button (from /buy menu)
 def is_product_selection_button(text):
     return text in ["🛍 Canva Edu Admin", "♻️ Up lại Canva Edu"]
@@ -2649,6 +2653,19 @@ def handle_upgrade_button(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     show_upgrade_canva_options(id, lang)
+
+# Handler for upgrade warranty button (BH 3 tháng - 120K / KBH - 50K)
+@bot.message_handler(content_types=["text"], func=lambda message: is_upgrade_warranty_button(message.text))
+def handle_upgrade_warranty_button(message):
+    """Handle upgrade warranty button press from reply keyboard"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    username = message.from_user.username or "user"
+    
+    if message.text == "🛡 BH 3 tháng - 120K":
+        process_upgrade_canva_order(id, username, "bh3", lang)
+    else:  # "⚡ KBH - 50K"
+        process_upgrade_canva_order(id, username, "kbh", lang)
 
 # Handler for product selection button (from /buy menu)
 @bot.message_handler(content_types=["text"], func=lambda message: is_product_selection_button(message.text))
