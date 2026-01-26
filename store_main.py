@@ -640,8 +640,9 @@ def callback_query(call):
                 bot.answer_callback_query(call.id, f"Error: {e}")
             return
         elif call.data == "back_to_warranty" or call.data == "back_to_products":
-            # Go back to product selection menu - edit current message
+            # Go back to product selection menu - edit inline + update reply keyboard
             bot.answer_callback_query(call.id, "Quay lại...")
+            # Edit inline message
             inline_kb = types.InlineKeyboardMarkup(row_width=1)
             inline_kb.row(
                 types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
@@ -649,10 +650,21 @@ def callback_query(call):
             inline_kb.row(
                 types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
             )
-            bot.edit_message_text("👇 Chọn sản phẩm:", call.message.chat.id, call.message.message_id, reply_markup=inline_kb)
+            try:
+                bot.edit_message_text("👇 Chọn sản phẩm:", call.message.chat.id, call.message.message_id, reply_markup=inline_kb)
+            except:
+                bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
+            # Update reply keyboard
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛍 Canva Edu Admin"),
+                types.KeyboardButton(text="♻️ Up lại Canva Edu")
+            )
+            nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+            update_reply_keyboard(user_id, nav_keyboard)
             return
         elif call.data == "back_to_canva":
-            # Go back to Canva Edu Admin warranty selection - edit current message
+            # Go back to Canva Edu Admin warranty selection - edit inline message
             bot.answer_callback_query(call.id, "Quay lại...")
             show_canva_product_details(user_id, lang, call.message.chat.id, call.message.message_id)
             return
@@ -2251,6 +2263,20 @@ def is_upgrade_button(text):
 def is_product_selection_button(text):
     return text in ["🛍 Canva Edu Admin", "♻️ Up lại Canva Edu"]
 
+# Helper function to update reply keyboard message
+def update_reply_keyboard(user_id, reply_markup):
+    """Delete old reply keyboard message and send new one"""
+    # Delete old message if exists
+    if user_id in pending_reply_keyboard_messages:
+        try:
+            msg_info = pending_reply_keyboard_messages[user_id]
+            bot.delete_message(msg_info["chat_id"], msg_info["message_id"])
+        except:
+            pass
+    # Send new message with reply keyboard
+    reply_msg = bot.send_message(user_id, "⌨️", reply_markup=reply_markup)
+    pending_reply_keyboard_messages[user_id] = {"chat_id": user_id, "message_id": reply_msg.message_id}
+
 # Show Canva Edu Admin product details
 def show_canva_product_details(user_id, lang, chat_id=None, message_id=None):
     """Show Canva Edu Admin product with warranty options"""
@@ -2272,8 +2298,12 @@ def show_canva_product_details(user_id, lang, chat_id=None, message_id=None):
     
     msg = f"🛍 <b>CANVA EDU ADMIN</b>\n\n📦 Còn: {canva_stock} tài khoản\n\n{price_tiers}\n\n👇 Chọn loại bảo hành:"
     
+    # Edit inline message
     if chat_id and message_id:
-        bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        try:
+            bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        except:
+            bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
     else:
         bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
 
@@ -2304,8 +2334,12 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     msg += "• Cung cấp mã xác thực khi Admin yêu cầu\n\n"
     msg += "👇 Chọn loại bảo hành:"
     
+    # Edit inline message
     if chat_id and message_id:
-        bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        try:
+            bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        except:
+            bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
     else:
         bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
 
@@ -2343,8 +2377,12 @@ def show_quantity_selection(user_id, warranty_type, lang, chat_id=None, message_
     
     msg = f"🛡 <b>Đã chọn: {warranty_label}</b>\n\n{price_info}\n\n👇 Chọn số lượng muốn mua:"
     
+    # Edit inline message
     if chat_id and message_id:
-        bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        try:
+            bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        except:
+            bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
     else:
         bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
 
@@ -2641,6 +2679,9 @@ pending_admin_messages = {}
 # Store pending order info (not saved to DB until payment confirmed)
 # Format: {ordernumber: {user_id, username, product_name, price, quantity, product_number, orderdate}}
 pending_orders_info = {}
+# Store reply keyboard message_id for each user to delete and resend
+# Format: {user_id: {"chat_id": chat_id, "message_id": message_id}}
+pending_reply_keyboard_messages = {}
 # Rate limit for OTP requests
 # otp_request_count: user_id -> number of requests
 # otp_rate_limit: user_id -> timestamp when limit expires
@@ -3893,3 +3934,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Error starting Flask application: {e}")
         exit(1)
+
