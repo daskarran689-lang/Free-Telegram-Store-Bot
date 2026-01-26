@@ -2665,11 +2665,41 @@ def handle_product_selection_button(message):
 #Command handler and fucntion to shop Items
 @bot.message_handler(commands=['buy'])
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
-def shop_items(message):
+def shop_items_handler(message):
     display_name = get_user_display_name(message)
     if not is_admin(message.from_user.id):
         notify_admin("🛒 Xem sản phẩm", display_name)
-    UserOperations.shop_items(message)
+    
+    user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    products_list = GetDataFromDB.GetProductInfo()
+    
+    if products_list == [] or products_list is None:
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+        bot.send_message(user_id, get_text("no_product_store", lang), reply_markup=keyboard)
+    else:
+        # Inline keyboard với 2 nút sản phẩm
+        inline_kb = types.InlineKeyboardMarkup(row_width=1)
+        inline_kb.row(
+            types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
+        )
+        inline_kb.row(
+            types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
+        )
+        
+        # Reply keyboard với 2 nút sản phẩm
+        nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        nav_keyboard.row(
+            types.KeyboardButton(text="🛍 Canva Edu Admin"),
+            types.KeyboardButton(text="♻️ Up lại Canva Edu")
+        )
+        nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+        
+        # Gửi message với inline keyboard
+        bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
+        # Gửi message với reply keyboard và lưu message_id
+        init_reply_keyboard(user_id, nav_keyboard)
 
 # Command shortcuts
 @bot.message_handler(commands=['menu'])
