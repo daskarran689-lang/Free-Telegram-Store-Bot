@@ -2263,6 +2263,10 @@ def is_upgrade_button(text):
 def is_product_selection_button(text):
     return text in ["🛍 Canva Edu Admin", "♻️ Up lại Canva Edu"]
 
+# Store reply keyboard message_id for each user to delete and resend
+# Format: {user_id: {"chat_id": chat_id, "message_id": message_id}}
+pending_reply_keyboard_messages = {}
+
 # Helper function to update reply keyboard message
 def update_reply_keyboard(user_id, reply_markup):
     """Delete old reply keyboard message and send new one"""
@@ -2710,9 +2714,6 @@ pending_admin_messages = {}
 # Store pending order info (not saved to DB until payment confirmed)
 # Format: {ordernumber: {user_id, username, product_name, price, quantity, product_number, orderdate}}
 pending_orders_info = {}
-# Store reply keyboard message_id for each user to delete and resend
-# Format: {user_id: {"chat_id": chat_id, "message_id": message_id}}
-pending_reply_keyboard_messages = {}
 # Rate limit for OTP requests
 # otp_request_count: user_id -> number of requests
 # otp_rate_limit: user_id -> timestamp when limit expires
