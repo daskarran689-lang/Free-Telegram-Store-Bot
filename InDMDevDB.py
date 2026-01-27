@@ -32,51 +32,94 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     USE_POSTGRES = True
     logger.info(f"Using PostgreSQL database (Supabase: {IS_SUPABASE})")
     
-    # Don't use connection pool - create fresh connections each time
-    # This works better with Supabase pooler and avoids connection issues
-    _pool = None
+    # Connection pool - reuse connections for better performance
+    _connection_pool = []
+    _pool_lock = threading.Lock()
+    _MAX_POOL_SIZE = 5
+    _last_successful_conn = None
     
-    def _create_connection(retries=3, timeout=30):
-        """Create a new database connection with retry logic"""
-        last_error = None
-        for attempt in range(retries):
-            try:
-                conn = psycopg.connect(
-                    DATABASE_URL, 
-                    connect_timeout=timeout,
-                    autocommit=True
-                )
-                return conn
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Connection attempt {attempt + 1}/{retries} failed: {e}")
-                if attempt < retries - 1:
-                    import time
-                    time.sleep(1)  # Wait before retry
-        raise last_error
+    def _create_connection(timeout=10):
+        """Create a single database connection"""
+        return psycopg.connect(
+            DATABASE_URL, 
+            connect_timeout=timeout,
+            autocommit=True
+        )
+    
+    def _get_pooled_connection():
+        """Get connection from pool or create new one"""
+        global _last_successful_conn
+        
+        with _pool_lock:
+            # Try to get from pool first
+            while _connection_pool:
+                conn = _connection_pool.pop()
+                try:
+                    # Quick health check
+                    conn.execute("SELECT 1")
+                    return conn
+                except:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+        
+        # Create new connection with smart timeout
+        # If we had a successful connection recently, use shorter timeout
+        timeout = 5 if _last_successful_conn else 15
+        
+        try:
+            conn = _create_connection(timeout=timeout)
+            _last_successful_conn = True
+            return conn
+        except Exception as e:
+            _last_successful_conn = False
+            raise
+    
+    def _return_to_pool(conn):
+        """Return connection to pool for reuse"""
+        if conn is None:
+            return
+        with _pool_lock:
+            if len(_connection_pool) < _MAX_POOL_SIZE:
+                _connection_pool.append(conn)
+            else:
+                try:
+                    conn.close()
+                except:
+                    pass
     
     @contextmanager
     def get_db_connection():
-        """Context manager for PostgreSQL - creates new connection each time"""
+        """Context manager for PostgreSQL - uses connection pool"""
         conn = None
         try:
-            conn = _create_connection()
+            conn = _get_pooled_connection()
             yield conn
+            # Return to pool on success
+            _return_to_pool(conn)
+            conn = None
         except Exception as e:
-            logger.error(f"Database connection error: {e}")
+            logger.error(f"Database error: {e}")
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
             raise
         finally:
+            # Close if not returned to pool
             if conn:
                 try:
                     conn.close()
                 except:
                     pass
     
-    # For backward compatibility - create initial connection lazily
+    # For backward compatibility
     def get_connection():
-        return _create_connection()
+        return _get_pooled_connection()
     
-    # Lazy initialization - don't connect at import time
+    # Lazy initialization
     db_connection = None
     cursor = None
     
@@ -87,7 +130,7 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
                 db_connection = get_connection()
                 cursor = db_connection.cursor()
             except Exception as e:
-                logger.warning(f"Initial connection failed, will retry later: {e}")
+                logger.warning(f"Initial connection failed: {e}")
                 db_connection = None
                 cursor = None
 else:
