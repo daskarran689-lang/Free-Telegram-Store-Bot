@@ -12,43 +12,33 @@ logger = logging.getLogger(__name__)
 # Database configuration
 DATABASE_URL = os.getenv('DATABASE_URL', '')
 
+# Check if using Supabase
+IS_SUPABASE = 'supabase' in DATABASE_URL.lower() if DATABASE_URL else False
+
+# Add sslmode=require for Supabase if not present
+if DATABASE_URL and IS_SUPABASE and 'sslmode' not in DATABASE_URL:
+    if '?' in DATABASE_URL:
+        DATABASE_URL += '&sslmode=require'
+    else:
+        DATABASE_URL += '?sslmode=require'
+
 db_lock = threading.Lock()
 
 if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     # Use PostgreSQL with psycopg3
     import psycopg
     from psycopg import OperationalError
-    from psycopg_pool import ConnectionPool
     
     USE_POSTGRES = True
-    logger.info("Using PostgreSQL database")
+    logger.info(f"Using PostgreSQL database (Supabase: {IS_SUPABASE})")
     
-    # Connection pool for better performance
+    # Don't use connection pool - create fresh connections each time
+    # This works better with Supabase pooler and avoids connection issues
     _pool = None
-    
-    def create_pool():
-        global _pool
-        try:
-            _pool = ConnectionPool(
-                DATABASE_URL,
-                min_size=1,
-                max_size=5,
-                timeout=30,
-                open=False,  # Don't open connections immediately
-                kwargs={"autocommit": True, "options": "-c statement_timeout=30000"}
-            )
-            _pool.open()  # Open pool
-            logger.info("Connection pool created and opened")
-        except Exception as e:
-            logger.warning(f"Pool creation failed, will use single connections: {e}")
-            _pool = None
-    
-    # Try to create pool
-    create_pool()
     
     @contextmanager
     def get_db_connection():
-        """Context manager for PostgreSQL - uses pool or creates new connection"""
+        """Context manager for PostgreSQL - creates new connection each time"""
         conn = None
         from_pool = False
         try:
@@ -56,10 +46,10 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
                 conn = _pool.getconn()
                 from_pool = True
             else:
+                # Direct connection (for Supabase or when pool fails)
                 conn = psycopg.connect(
                     DATABASE_URL, 
-                    connect_timeout=10,
-                    options="-c statement_timeout=30000",
+                    connect_timeout=30,
                     autocommit=True
                 )
             yield conn
@@ -73,8 +63,11 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
                         _pool.putconn(conn)
                     except:
                         pass
-                elif not conn.closed:
-                    conn.close()
+                else:
+                    try:
+                        conn.close()
+                    except:
+                        pass
     
     # For backward compatibility - create initial connection lazily
     def get_connection():
@@ -82,8 +75,7 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
             return _pool.getconn()
         return psycopg.connect(
             DATABASE_URL, 
-            connect_timeout=5,
-            options="-c statement_timeout=10000",
+            connect_timeout=30,
             autocommit=True
         )
     
