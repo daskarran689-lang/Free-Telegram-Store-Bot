@@ -36,48 +36,45 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     # This works better with Supabase pooler and avoids connection issues
     _pool = None
     
+    def _create_connection(retries=3):
+        """Create a new database connection with retry logic"""
+        last_error = None
+        for attempt in range(retries):
+            try:
+                conn = psycopg.connect(
+                    DATABASE_URL, 
+                    connect_timeout=60,
+                    autocommit=True
+                )
+                return conn
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Connection attempt {attempt + 1}/{retries} failed: {e}")
+                if attempt < retries - 1:
+                    import time
+                    time.sleep(2)  # Wait before retry
+        raise last_error
+    
     @contextmanager
     def get_db_connection():
         """Context manager for PostgreSQL - creates new connection each time"""
         conn = None
-        from_pool = False
         try:
-            if _pool:
-                conn = _pool.getconn()
-                from_pool = True
-            else:
-                # Direct connection (for Supabase or when pool fails)
-                conn = psycopg.connect(
-                    DATABASE_URL, 
-                    connect_timeout=30,
-                    autocommit=True
-                )
+            conn = _create_connection()
             yield conn
         except Exception as e:
             logger.error(f"Database connection error: {e}")
             raise
         finally:
             if conn:
-                if from_pool and _pool:
-                    try:
-                        _pool.putconn(conn)
-                    except:
-                        pass
-                else:
-                    try:
-                        conn.close()
-                    except:
-                        pass
+                try:
+                    conn.close()
+                except:
+                    pass
     
     # For backward compatibility - create initial connection lazily
     def get_connection():
-        if _pool:
-            return _pool.getconn()
-        return psycopg.connect(
-            DATABASE_URL, 
-            connect_timeout=30,
-            autocommit=True
-        )
+        return _create_connection()
     
     # Lazy initialization - don't connect at import time
     db_connection = None
