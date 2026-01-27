@@ -34,11 +34,13 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
                 min_size=1,
                 max_size=5,
                 timeout=30,
+                open=False,  # Don't open connections immediately
                 kwargs={"autocommit": True, "options": "-c statement_timeout=30000"}
             )
-            logger.info("Connection pool created")
+            _pool.open()  # Open pool
+            logger.info("Connection pool created and opened")
         except Exception as e:
-            logger.warning(f"Pool creation failed, using single connections: {e}")
+            logger.warning(f"Pool creation failed, will use single connections: {e}")
             _pool = None
     
     # Try to create pool
@@ -48,26 +50,31 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     def get_db_connection():
         """Context manager for PostgreSQL - uses pool or creates new connection"""
         conn = None
+        from_pool = False
         try:
             if _pool:
                 conn = _pool.getconn()
-                yield conn
-                _pool.putconn(conn)
-                conn = None  # Don't close pooled connection
+                from_pool = True
             else:
                 conn = psycopg.connect(
                     DATABASE_URL, 
-                    connect_timeout=5,
-                    options="-c statement_timeout=10000",
+                    connect_timeout=10,
+                    options="-c statement_timeout=30000",
                     autocommit=True
                 )
-                yield conn
+            yield conn
         except Exception as e:
             logger.error(f"Database connection error: {e}")
             raise
         finally:
-            if conn and not conn.closed:
-                conn.close()
+            if conn:
+                if from_pool and _pool:
+                    try:
+                        _pool.putconn(conn)
+                    except:
+                        pass
+                elif not conn.closed:
+                    conn.close()
     
     # For backward compatibility - create initial connection lazily
     def get_connection():
