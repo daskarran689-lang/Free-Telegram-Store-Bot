@@ -423,6 +423,11 @@ def callback_query(call):
         user_id = call.from_user.id
         lang = get_user_lang(user_id)
         
+        # Check rate limit (anti-spam)
+        if not check_rate_limit(user_id):
+            bot.answer_callback_query(call.id, "⏳ Thao tác quá nhanh, vui lòng chờ...")
+            return
+        
         if call.data.startswith("otp_"):
             # Handle inline OTP button with specific email
             email = call.data.replace("otp_", "")
@@ -2271,6 +2276,22 @@ def is_product_selection_button(text):
 # Format: {user_id: {"chat_id": chat_id, "message_id": message_id}}
 pending_reply_keyboard_messages = {}
 
+# Rate limit for user actions (anti-spam)
+# Format: {user_id: last_action_timestamp}
+user_action_timestamps = {}
+ACTION_COOLDOWN = 1.0  # Minimum seconds between actions
+
+def check_rate_limit(user_id):
+    """Check if user is rate limited. Returns True if allowed, False if spam."""
+    current_time = time.time()
+    last_action = user_action_timestamps.get(user_id, 0)
+    
+    if current_time - last_action < ACTION_COOLDOWN:
+        return False  # Too fast, rate limited
+    
+    user_action_timestamps[user_id] = current_time
+    return True  # Allowed
+
 # Helper function to initialize reply keyboard message (first time, no delete)
 def init_reply_keyboard(user_id, reply_markup):
     """Send reply keyboard message and save message_id (for first time)"""
@@ -2639,6 +2660,11 @@ def handle_buy_with_quantity(message, warranty_type="kbh"):
 def handle_warranty_button(message):
     """Handle warranty type button press"""
     id = message.from_user.id
+    
+    # Check rate limit
+    if not check_rate_limit(id):
+        return
+    
     lang = get_user_lang(id)
     
     if message.text in ["🛡 Mua BH 3 tháng", "🛡 BH 3 tháng"]:
@@ -2651,6 +2677,11 @@ def handle_warranty_button(message):
 def handle_upgrade_button(message):
     """Handle upgrade canva button press"""
     id = message.from_user.id
+    
+    # Check rate limit
+    if not check_rate_limit(id):
+        return
+    
     lang = get_user_lang(id)
     show_upgrade_canva_options(id, lang)
 
@@ -2672,6 +2703,11 @@ def handle_upgrade_warranty_button(message):
 def handle_product_selection_button(message):
     """Handle product selection button press from /buy menu"""
     id = message.from_user.id
+    
+    # Check rate limit
+    if not check_rate_limit(id):
+        return
+    
     lang = get_user_lang(id)
     
     if message.text == "🛍 Canva Edu Admin":
@@ -2683,11 +2719,16 @@ def handle_product_selection_button(message):
 @bot.message_handler(commands=['buy'])
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
 def shop_items_handler(message):
+    user_id = message.from_user.id
+    
+    # Check rate limit
+    if not check_rate_limit(user_id):
+        return
+    
     display_name = get_user_display_name(message)
-    if not is_admin(message.from_user.id):
+    if not is_admin(user_id):
         notify_admin("🛒 Xem sản phẩm", display_name)
     
-    user_id = message.from_user.id
     lang = get_user_lang(user_id)
     products_list = GetDataFromDB.GetProductInfo()
     
