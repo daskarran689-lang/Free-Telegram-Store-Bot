@@ -706,13 +706,14 @@ class GetDataFromDB:
         
     def GetUserIDsInDB():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT user_id FROM ShopUserTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting user IDs: {e}")
-            return None
+            return []
 
     def GetProductName(productnumber):
         try:
@@ -815,13 +816,14 @@ class GetDataFromDB:
 
     def GetCategoryIDsInDB():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT categorynumber, categoryname FROM ShopCategoryTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting category IDs: {e}")
-            return None
+            return []
 
     def GetCategoryNumProduct(productcategory):
         try:
@@ -846,83 +848,91 @@ class GetDataFromDB:
 
     def GetAdminIDsInDB():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT admin_id FROM ShopAdminTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting admin IDs: {e}")
-            return None
+            return []
 
     def GetAdminUsernamesInDB():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT username FROM ShopAdminTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting admin usernames: {e}")
-            return None
+            return []
 
     def GetProductNumberName():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT DISTINCT productnumber, productname FROM ShopProductTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting product number/name: {e}")
-            return None
+            return []
 
     def GetProductInfos():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT DISTINCT productnumber, productname, productprice FROM ShopProductTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting product infos: {e}")
-            return None
+            return []
 
     def GetProductInfo():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting product info: {e}")
-            return None
+            return []
 
     def GetProductInfoByCTGName(productcategory):
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productcategory = '{productcategory}'",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting product info by category: {e}")
-            return None
+            return []
         
     def GetProductInfoByPName(productnumber):
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting product info by number: {e}")
-            return None
+            return []
         
     def GetUsersInfo():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT DISTINCT user_id, username, wallet FROM ShopUserTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting users info: {e}")
-            return None
+            return []
     
     def GetUsersInfoWithDate():
         try:
@@ -931,7 +941,7 @@ class GetDataFromDB:
                 "SELECT DISTINCT user_id, username, wallet, created_at FROM ShopUserTable ORDER BY created_at DESC",
                 fetch='all'
             )
-            return result
+            return result if result else []
         except Exception as e:
             # Nếu không có cột created_at, query không có cột đó
             try:
@@ -942,10 +952,10 @@ class GetDataFromDB:
                 # Thêm None cho created_at
                 if result:
                     return [(r[0], r[1], r[2], None) for r in result]
-                return None
+                return []
             except Exception as e2:
                 logger.error(f"Error getting users info with date: {e2}")
-                return None
+                return []
         
     def AllUsers():
         try:
@@ -989,23 +999,25 @@ class GetDataFromDB:
              
     def GetAdminsInfo():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT DISTINCT admin_id, username, wallet FROM ShopAdminTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting admins info: {e}")
-            return None
+            return []
         
     def GetOrderInfo():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT DISTINCT ordernumber, productname, buyerusername, orderdate FROM ShopOrderTable ORDER BY orderdate DESC",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting order info: {e}")
-            return None
+            return []
 
     def GetPaymentMethods():
         try:
@@ -1071,53 +1083,58 @@ class GetDataFromDB:
         
     def GetProductIDs():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT productnumber FROM ShopProductTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting product IDs: {e}")
-            return None
+            return []
     
     def GetOrderDetails(ordernumber):
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 f"SELECT DISTINCT buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber FROM ShopOrderTable WHERE ordernumber = '{ordernumber}' AND paidmethod != 'NO'",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting order details: {e}")
-            return None
+            return []
         
     def GetOrderIDs_Buyer(buyerid):
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 f"SELECT ordernumber FROM ShopOrderTable WHERE buyerid = '{buyerid}' AND paidmethod != 'NO'",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting buyer order IDs: {e}")
-            return None
+            return []
 
     def GetOrderIDs():
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 "SELECT ordernumber FROM ShopOrderTable",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting order IDs: {e}")
-            return None
+            return []
 
     def GetAllUnfirmedOrdersUser(buyerid):
         try:
-            return execute_with_new_connection(
+            result = execute_with_new_connection(
                 f"SELECT DISTINCT ordernumber, productname, buyerusername, payment_id, productnumber FROM ShopOrderTable WHERE paidmethod = 'NO' AND buyerid = '{buyerid}' AND payment_id != ordernumber",
                 fetch='all'
             )
+            return result if result else []
         except Exception as e:
             logger.error(f"Error getting unconfirmed orders: {e}")
-            return None
+            return []
 
 
 class CleanData:

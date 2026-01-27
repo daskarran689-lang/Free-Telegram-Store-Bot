@@ -995,7 +995,7 @@ def is_manage_products_button(text):
 def ManageProducts(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
@@ -1251,7 +1251,7 @@ def AddProductsMNG(message):
     id = message.from_user.id
     usname = message.chat.username
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         msg = bot.send_message(id, get_text("reply_product_name", lang))
@@ -1268,7 +1268,7 @@ def AddProductsMNG(message):
 def add_a_product_name(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         try:
@@ -1287,7 +1287,7 @@ def add_a_product_name(message):
 def add_a_product_decription(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         try:
@@ -1306,7 +1306,7 @@ def add_a_product_decription(message):
 def add_a_product_price(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         try:
@@ -1326,7 +1326,7 @@ def add_a_product_price(message):
 def add_a_product_photo_link(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         try:
@@ -1355,7 +1355,7 @@ def add_a_product_photo_link(message):
 def add_a_product_category(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         input_cat = message.text
@@ -1400,7 +1400,7 @@ def add_a_product_category(message):
 def add_a_product_keys_file(message):
     id = message.from_user.id
     lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
         try:
