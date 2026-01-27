@@ -552,6 +552,9 @@ class CreateTables:
 # Initialize tables with background retry
 def _init_tables_background():
     """Initialize tables in background thread"""
+    # Wait a bit to let Flask start first
+    time.sleep(3)
+    
     for i in range(5):  # Try 5 times with increasing delay
         try:
             if CreateTables.create_all_tables():
@@ -562,14 +565,22 @@ def _init_tables_background():
 
 # IMPORTANT: Always initialize in background to not block Flask startup on Render
 # Render requires port to be open within 60 seconds
+_db_init_started = False
+
 def start_background_db_init():
     """Start database initialization in background - non-blocking"""
+    global _db_init_started
+    if _db_init_started:
+        return
+    _db_init_started = True
+    
     init_thread = threading.Thread(target=_init_tables_background, daemon=True)
     init_thread.start()
     logger.info("Database initialization started in background")
 
-# Start background init immediately - don't block!
-start_background_db_init()
+# DON'T start automatically on import - let store_main.py control when to start
+# This prevents blocking during import
+# start_background_db_init() will be called from store_main.py after Flask is ready
 
 # Helper function to get placeholder for SQL queries
 def get_placeholder():

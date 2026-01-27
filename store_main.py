@@ -4070,14 +4070,30 @@ def health_check():
 
 if __name__ == "__main__":
     try:
-        # Start keep-alive thread
-        if os.getenv('RENDER_EXTERNAL_URL'):
-            keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-            keep_alive_thread.start()
-            logger.info("Keep-alive thread started")
-        
         port = int(os.getenv("PORT", "10000"))  # Render provides PORT
         logger.info(f"Starting Flask application on port {port}...")
+        
+        # IMPORTANT: Start background tasks AFTER Flask starts listening
+        # This ensures Render sees the port open quickly
+        def start_background_tasks():
+            """Start all background tasks after Flask is ready"""
+            time.sleep(1)  # Give Flask a moment to bind port
+            
+            # Start DB initialization
+            from InDMDevDB import start_background_db_init
+            start_background_db_init()
+            
+            # Start keep-alive thread
+            if os.getenv('RENDER_EXTERNAL_URL'):
+                keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+                keep_alive_thread.start()
+                logger.info("Keep-alive thread started")
+        
+        # Start background tasks in separate thread
+        bg_thread = threading.Thread(target=start_background_tasks, daemon=True)
+        bg_thread.start()
+        
+        # Run Flask - this blocks but port opens immediately
         flask_app.run(debug=False, host="0.0.0.0", port=port)
     except Exception as e:
         logger.error(f"Error starting Flask application: {e}")
