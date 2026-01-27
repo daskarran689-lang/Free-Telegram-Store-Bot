@@ -24,18 +24,25 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     logger.info("Using PostgreSQL database")
     
     # Connection pool for better performance
-    try:
-        _pool = ConnectionPool(
-            DATABASE_URL,
-            min_size=2,
-            max_size=10,
-            timeout=10,
-            kwargs={"autocommit": True, "options": "-c statement_timeout=10000"}
-        )
-        logger.info("Connection pool created")
-    except Exception as e:
-        logger.warning(f"Pool creation failed, using single connections: {e}")
-        _pool = None
+    _pool = None
+    
+    def create_pool():
+        global _pool
+        try:
+            _pool = ConnectionPool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=5,
+                timeout=30,
+                kwargs={"autocommit": True, "options": "-c statement_timeout=30000"}
+            )
+            logger.info("Connection pool created")
+        except Exception as e:
+            logger.warning(f"Pool creation failed, using single connections: {e}")
+            _pool = None
+    
+    # Try to create pool
+    create_pool()
     
     @contextmanager
     def get_db_connection():
@@ -62,7 +69,7 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
             if conn and not conn.closed:
                 conn.close()
     
-    # For backward compatibility - create initial connection
+    # For backward compatibility - create initial connection lazily
     def get_connection():
         if _pool:
             return _pool.getconn()
@@ -73,8 +80,20 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
             autocommit=True
         )
     
-    db_connection = get_connection()
-    cursor = db_connection.cursor()
+    # Lazy initialization - don't connect at import time
+    db_connection = None
+    cursor = None
+    
+    def init_db_connection():
+        global db_connection, cursor
+        if db_connection is None:
+            try:
+                db_connection = get_connection()
+                cursor = db_connection.cursor()
+            except Exception as e:
+                logger.warning(f"Initial connection failed, will retry later: {e}")
+                db_connection = None
+                cursor = None
 else:
     # Use SQLite (local development)
     USE_POSTGRES = False
