@@ -390,16 +390,15 @@ def create_main_keyboard(lang="vi", user_id=None, skip_db_check=False):
     # Check if user has purchased (with caching)
     has_purchased = False
     if user_id and not skip_db_check:
-        import time as time_cache
         cache_key = str(user_id)
         cached = _user_purchase_cache.get(cache_key)
-        if cached and (time_cache.time() - cached['time']) < _cache_ttl:
+        if cached and (time.time() - cached['time']) < _cache_ttl:
             has_purchased = cached['value']
         else:
             try:
                 accounts = CanvaAccountDB.get_buyer_accounts(user_id)
                 has_purchased = accounts and len(accounts) > 0
-                _user_purchase_cache[cache_key] = {'value': has_purchased, 'time': time_cache.time()}
+                _user_purchase_cache[cache_key] = {'value': has_purchased, 'time': time.time()}
             except:
                 pass
     
@@ -1995,7 +1994,6 @@ def detect_otp_type(subject, text_body):
 
 def get_otp_for_email(user_id, email, lang):
     """Get OTP from TempMail or EmailWorker for a specific email"""
-    import time as time_module
     from tempmail_client import EmailWorkerClient
     
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -2004,7 +2002,7 @@ def get_otp_for_email(user_id, email, lang):
     
     # Check if user is rate limited
     if user_id in otp_rate_limit:
-        remaining = otp_rate_limit[user_id] - time_module.time()
+        remaining = otp_rate_limit[user_id] - time.time()
         if remaining > 0:
             minutes = int(remaining // 60)
             seconds = int(remaining % 60)
@@ -2021,7 +2019,7 @@ def get_otp_for_email(user_id, email, lang):
     
     # Check if reached limit
     if current_count > OTP_MAX_REQUESTS:
-        otp_rate_limit[user_id] = time_module.time() + OTP_LIMIT_DURATION
+        otp_rate_limit[user_id] = time.time() + OTP_LIMIT_DURATION
         bot.send_message(user_id, f"⚠️ Bạn đã lấy mã quá {OTP_MAX_REQUESTS} lần.\n⏳ Vui lòng đợi 15 phút.", reply_markup=keyboard)
         return
     
@@ -3793,7 +3791,6 @@ def ListOrders(message):
                 bot.send_message(id, "📋 *DANH SÁCH ĐƠN HÀNG*", parse_mode="Markdown")
                 bot.send_message(id, "👇 Mã đơn hàng - Tên sản phẩm - Khách - Ngày mua 👇")
                 for ordernumber, productname, buyerusername, orderdate in all_orders:
-                    import time
                     time.sleep(0.3)
                     # Escape username để tránh lỗi Markdown
                     safe_username = str(buyerusername).replace("_", "\\_") if buyerusername else "N/A"
@@ -4032,7 +4029,6 @@ def ViewPendingOrders(message):
 
 # Keep-alive mechanism to prevent Render from sleeping
 import threading
-import time as time_module_keepalive
 
 def keep_alive():
     """Ping self every 10 minutes to prevent Render free tier from sleeping"""
@@ -4043,7 +4039,7 @@ def keep_alive():
     
     while True:
         try:
-            time_module_keepalive.sleep(600)  # 10 minutes
+            time.sleep(600)  # 10 minutes
             response = requests.get(f"{render_url}/health", timeout=30)
             logger.info(f"Keep-alive ping: {response.status_code}")
         except Exception as e:
