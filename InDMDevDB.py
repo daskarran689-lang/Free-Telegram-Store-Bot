@@ -36,14 +36,14 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     # This works better with Supabase pooler and avoids connection issues
     _pool = None
     
-    def _create_connection(retries=3):
+    def _create_connection(retries=3, timeout=30):
         """Create a new database connection with retry logic"""
         last_error = None
         for attempt in range(retries):
             try:
                 conn = psycopg.connect(
                     DATABASE_URL, 
-                    connect_timeout=60,
+                    connect_timeout=timeout,
                     autocommit=True
                 )
                 return conn
@@ -52,7 +52,7 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
                 logger.warning(f"Connection attempt {attempt + 1}/{retries} failed: {e}")
                 if attempt < retries - 1:
                     import time
-                    time.sleep(2)  # Wait before retry
+                    time.sleep(1)  # Wait before retry
         raise last_error
     
     @contextmanager
@@ -370,8 +370,11 @@ class CreateTables:
                 db_connection.rollback()
             raise
         
-# Initialize tables
-CreateTables.create_all_tables()
+# Initialize tables (non-blocking - will retry on first use)
+try:
+    CreateTables.create_all_tables()
+except Exception as e:
+    logger.warning(f"Initial table creation failed (will retry later): {e}")
 
 # Helper function to get placeholder for SQL queries
 def get_placeholder():

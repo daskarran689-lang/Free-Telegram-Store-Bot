@@ -4062,8 +4062,8 @@ if __name__ == "__main__":
             keep_alive_thread.start()
             logger.info("Keep-alive thread started")
         
-        logger.info("Starting Flask application...")
         port = int(os.getenv("PORT", "10000"))  # Render provides PORT
+        logger.info(f"Starting Flask application on port {port}...")
         flask_app.run(debug=False, host="0.0.0.0", port=port)
     except Exception as e:
         logger.error(f"Error starting Flask application: {e}")
