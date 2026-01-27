@@ -792,8 +792,10 @@ class CanvaAccountDB:
     def get_buyer_accounts(buyer_id):
         """Get accounts owned by buyer"""
         try:
-            result = supabase.table(TABLE_CANVA).select('*').eq('buyer_id', buyer_id).execute()
-            return [(r['id'], r['email'], r['authkey'], r['status']) for r in result.data] if result.data else []
+            result = supabase.table(TABLE_CANVA).select('email,order_number,created_at').eq('buyer_id', buyer_id).execute()
+            if result.data:
+                return [(r['email'], r.get('order_number'), r.get('created_at')) for r in result.data]
+            return []
         except:
             return []
     
