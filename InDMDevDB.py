@@ -1,1838 +1,818 @@
-import sqlite3
-from datetime import datetime
-import threading
-import logging
+"""
+Database module using Supabase REST API
+- No connection timeouts
+- Instant responses via HTTP
+- Works perfectly with Render free tier
+"""
+
 import os
-import time
-from contextlib import contextmanager
+import logging
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv('config.env')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database configuration
-DATABASE_URL = os.getenv('DATABASE_URL', '')
+# Supabase configuration
+SUPABASE_URL = os.getenv('SUPABASE_URL', '')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
 
-# Check if using Supabase
-IS_SUPABASE = 'supabase' in DATABASE_URL.lower() if DATABASE_URL else False
+# Check if Supabase is configured
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
 
-# Add sslmode=require for Supabase if not present
-if DATABASE_URL and IS_SUPABASE and 'sslmode' not in DATABASE_URL:
-    if '?' in DATABASE_URL:
-        DATABASE_URL += '&sslmode=require'
-    else:
-        DATABASE_URL += '?sslmode=require'
-
-db_lock = threading.Lock()
-
-if DATABASE_URL and DATABASE_URL.startswith('postgres'):
-    # Use PostgreSQL with psycopg3
-    import psycopg
-    from psycopg import OperationalError
+if USE_SUPABASE:
+    from supabase import create_client, Client
     
-    USE_POSTGRES = True
-    logger.info(f"Using PostgreSQL database (Supabase: {IS_SUPABASE})")
-    
-    # ============== SUPABASE CONNECTION SETTINGS ==============
-    # Supabase free tier has cold starts, need longer timeouts
-    _INITIAL_TIMEOUT = 30  # First connection timeout (cold start)
-    _NORMAL_TIMEOUT = 15   # Normal operation timeout
-    _MAX_RETRIES = 5       # Max retry attempts
-    _RETRY_BASE_DELAY = 2  # Base delay for exponential backoff (seconds)
-    _MAX_POOL_SIZE = 3     # Smaller pool for Supabase free tier
-    _KEEPALIVE_INTERVAL = 30  # Keepalive ping interval
-    
-    # Connection pool
-    _connection_pool = []
-    _pool_lock = threading.Lock()
-    _db_initialized = False
-    _last_successful_conn = None
-    _tables_created = False
-    
-    def _create_connection(timeout=_INITIAL_TIMEOUT):
-        """Create a single database connection with Supabase optimizations"""
-        # Build connection options for Supabase
-        conn_options = f"connect_timeout={timeout}"
-        
-        # Add keepalive settings for long-running connections
-        if IS_SUPABASE:
-            conn_options += " keepalives=1 keepalives_idle=30 keepalives_interval=10 keepalives_count=5"
-        
-        conn = psycopg.connect(
-            DATABASE_URL,
-            autocommit=True,
-            options=f"-c statement_timeout=30000"  # 30s query timeout
-        )
-        return conn
-    
-    def _get_connection_with_retry(max_retries=_MAX_RETRIES, initial_timeout=_INITIAL_TIMEOUT):
-        """Get connection with exponential backoff retry"""
-        global _last_successful_conn
-        
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                # Use longer timeout for first attempts, shorter after success
-                if _last_successful_conn:
-                    timeout = _NORMAL_TIMEOUT
-                else:
-                    # Increase timeout with each retry
-                    timeout = initial_timeout + (attempt * 5)
-                
-                logger.info(f"DB connection attempt {attempt + 1}/{max_retries} (timeout={timeout}s)")
-                
-                conn = _create_connection(timeout=timeout)
-                
-                # Quick health check
-                conn.execute("SELECT 1")
-                
-                _last_successful_conn = time.time()
-                logger.info(f"Database connected successfully on attempt {attempt + 1}")
-                return conn
-                
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
-                
-                if attempt < max_retries - 1:
-                    # Exponential backoff: 2s, 4s, 8s, 16s...
-                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                    delay = min(delay, 30)  # Cap at 30 seconds
-                    logger.info(f"Retrying in {delay}s...")
-                    time.sleep(delay)
-        
-        logger.error(f"All {max_retries} connection attempts failed")
-        raise last_error
-    
-    def _get_pooled_connection():
-        """Get connection from pool or create new one with retry"""
-        global _last_successful_conn
-        
-        with _pool_lock:
-            # Try to get healthy connection from pool first
-            while _connection_pool:
-                conn = _connection_pool.pop()
-                try:
-                    # Quick health check with short timeout
-                    conn.execute("SELECT 1")
-                    return conn
-                except:
-                    try:
-                        conn.close()
-                    except:
-                        pass
-        
-        # No pooled connection available, create new one with retry
-        return _get_connection_with_retry()
-    
-    def _return_to_pool(conn):
-        """Return connection to pool for reuse"""
-        if conn is None:
-            return
-        with _pool_lock:
-            if len(_connection_pool) < _MAX_POOL_SIZE:
-                _connection_pool.append(conn)
-            else:
-                try:
-                    conn.close()
-                except:
-                    pass
-    
-    @contextmanager
-    def get_db_connection():
-        """Context manager for PostgreSQL - uses connection pool with retry"""
-        conn = None
-        try:
-            conn = _get_pooled_connection()
-            yield conn
-            # Return to pool on success
-            _return_to_pool(conn)
-            conn = None
-        except Exception as e:
-            logger.error(f"Database error: {e}")
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
-            raise
-        finally:
-            # Close if not returned to pool
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
-    
-    # For backward compatibility
-    def get_connection():
-        return _get_pooled_connection()
-    
-    # Lazy initialization
-    db_connection = None
-    cursor = None
-    
-    def init_db_connection():
-        """Initialize database connection with retry logic"""
-        global db_connection, cursor, _db_initialized
-        
-        if _db_initialized and db_connection is not None:
-            # Check if existing connection is still alive
-            try:
-                cursor.execute("SELECT 1")
-                return True
-            except:
-                db_connection = None
-                cursor = None
-        
-        try:
-            logger.info("Initializing database connection...")
-            db_connection = _get_connection_with_retry()
-            cursor = db_connection.cursor()
-            _db_initialized = True
-            logger.info("Database connection initialized successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize database connection: {e}")
-            db_connection = None
-            cursor = None
-            _db_initialized = False
-            return False
-    
-    def ensure_db_connection():
-        """Ensure database is connected, retry if needed"""
-        global db_connection, cursor
-        
-        if db_connection is None:
-            return init_db_connection()
-        
-        try:
-            cursor.execute("SELECT 1")
-            return True
-        except:
-            logger.warning("Database connection lost, reconnecting...")
-            db_connection = None
-            cursor = None
-            return init_db_connection()
+    # Create Supabase client - this is instant, no connection waiting
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Using Supabase REST API (instant, no connection timeout)")
 else:
-    # Use SQLite (local development)
-    USE_POSTGRES = False
-    DB_FILE = os.getenv('DATABASE_PATH', 'InDMDevDBShop.db')
-    logger.info(f"Using SQLite database: {DB_FILE}")
-    
-    db_connection = sqlite3.connect(DB_FILE, check_same_thread=False)
-    db_connection.row_factory = sqlite3.Row
-    cursor = db_connection.cursor()
-    
-    @contextmanager
-    def get_db_connection():
-        """Context manager for SQLite - uses global connection"""
-        yield db_connection
+    supabase = None
+    logger.warning("Supabase not configured! Set SUPABASE_URL and SUPABASE_KEY")
 
-# Backward compatibility aliases
-DBConnection = db_connection
-connected = cursor
+# Flag for backward compatibility
+USE_POSTGRES = USE_SUPABASE
+IS_SUPABASE = USE_SUPABASE
 
-# Helper class to auto-convert SQLite ? to PostgreSQL %s
-class DBCursor:
-    def __init__(self, cursor):
-        self._cursor = cursor
-    
-    def execute(self, query, params=None):
-        if USE_POSTGRES:
-            # Convert ? to %s for PostgreSQL
-            query = query.replace("?", "%s")
-        if params:
-            self._cursor.execute(query, params)
-        else:
-            self._cursor.execute(query)
-        return self._cursor
-    
-    def fetchone(self):
-        return self._cursor.fetchone()
-    
-    def fetchall(self):
-        return self._cursor.fetchall()
-
-# Replace connected with wrapper
-connected = DBCursor(cursor)
-
-def execute_with_new_connection(query, params=None, fetch='none', max_retries=3):
-    """Execute query with a fresh connection and retry logic"""
-    if USE_POSTGRES:
-        query = query.replace("?", "%s")
-    
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if params:
-                    cur.execute(query, params)
-                else:
-                    cur.execute(query)
-                
-                if fetch == 'one':
-                    return cur.fetchone()
-                elif fetch == 'all':
-                    return cur.fetchall()
-                return None
-        except Exception as e:
-            last_error = e
-            logger.warning(f"Query attempt {attempt + 1}/{max_retries} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(1 * (attempt + 1))  # 1s, 2s, 3s delay
-    
-    logger.error(f"Query failed after {max_retries} attempts: {last_error}")
-    raise last_error
-
-def execute_with_new_connection_safe(query, params=None, fetch='none', default=None):
-    """Execute query safely - returns default on error instead of raising"""
-    try:
-        return execute_with_new_connection(query, params, fetch)
-    except Exception as e:
-        logger.error(f"Safe query failed: {e}")
-        return default
-
-# Old function for backward compatibility - redirect to new one
-def _execute_with_new_connection_legacy(query, params=None, fetch='none'):
-    """Legacy wrapper"""
-    if USE_POSTGRES:
-        query = query.replace("?", "%s")
-    
-    with get_db_connection() as conn:
-        cur = conn.cursor()
-        if params:
-            cur.execute(query, params)
-        else:
-            cur.execute(query)
-        
-        if fetch == 'one':
-            return cur.fetchone()
-        elif fetch == 'all':
-            return cur.fetchall()
-        return None
-
-class CreateTables:
-    """Database table creation and management"""
-    
-    @staticmethod
-    def create_all_tables(max_retries=3):
-        """Create all necessary database tables with retry logic"""
-        global db_connection, cursor, _tables_created
-        
-        if USE_POSTGRES and _tables_created:
-            logger.info("Tables already created, skipping...")
-            return True
-        
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Creating tables attempt {attempt + 1}/{max_retries}...")
-                
-                # Get fresh connection for PostgreSQL
-                if USE_POSTGRES:
-                    db_connection = _get_connection_with_retry()
-                    cursor = db_connection.cursor()
-                
-                with db_lock:
-                    # Create ShopUserTable
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
-                            id SERIAL PRIMARY KEY,
-                            user_id BIGINT UNIQUE NOT NULL,
-                            username TEXT,
-                            wallet INTEGER DEFAULT 0,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            user_id INTEGER UNIQUE NOT NULL,
-                            username TEXT,
-                            wallet INTEGER DEFAULT 0,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    
-                    # Create ShopAdminTable
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
-                            id SERIAL PRIMARY KEY,
-                            admin_id BIGINT UNIQUE NOT NULL,
-                            username TEXT,
-                            wallet INTEGER DEFAULT 0,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            admin_id INTEGER UNIQUE NOT NULL,
-                            username TEXT,
-                            wallet INTEGER DEFAULT 0,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-
-                    # Create ShopProductTable
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
-                            id SERIAL PRIMARY KEY,
-                            productnumber BIGINT UNIQUE NOT NULL,
-                            admin_id BIGINT NOT NULL,
-                            username TEXT,
-                            productname TEXT NOT NULL,
-                            productdescription TEXT,
-                            productprice INTEGER DEFAULT 0,
-                            productimagelink TEXT,
-                            productdownloadlink TEXT,
-                            productkeysfile TEXT,
-                            productquantity INTEGER DEFAULT 0,
-                            productcategory TEXT DEFAULT 'Default Category',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            productnumber INTEGER UNIQUE NOT NULL,
-                            admin_id INTEGER NOT NULL,
-                            username TEXT,
-                            productname TEXT NOT NULL,
-                            productdescription TEXT,
-                            productprice INTEGER DEFAULT 0,
-                            productimagelink TEXT,
-                            productdownloadlink TEXT,
-                            productkeysfile TEXT,
-                            productquantity INTEGER DEFAULT 0,
-                            productcategory TEXT DEFAULT 'Default Category',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            FOREIGN KEY (admin_id) REFERENCES ShopAdminTable(admin_id)
-                        )""")
-
-                    # Create ShopOrderTable
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
-                            id SERIAL PRIMARY KEY,
-                            buyerid BIGINT NOT NULL,
-                            buyerusername TEXT,
-                            productname TEXT NOT NULL,
-                            productprice TEXT NOT NULL,
-                            orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            paidmethod TEXT DEFAULT 'NO',
-                            productdownloadlink TEXT,
-                            productkeys TEXT,
-                            buyercomment TEXT,
-                            ordernumber BIGINT UNIQUE NOT NULL,
-                            productnumber BIGINT NOT NULL,
-                            payment_id TEXT
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            buyerid INTEGER NOT NULL,
-                            buyerusername TEXT,
-                            productname TEXT NOT NULL,
-                            productprice TEXT NOT NULL,
-                            orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            paidmethod TEXT DEFAULT 'NO',
-                            productdownloadlink TEXT,
-                            productkeys TEXT,
-                            buyercomment TEXT,
-                            ordernumber INTEGER UNIQUE NOT NULL,
-                            productnumber INTEGER NOT NULL,
-                            payment_id TEXT,
-                            FOREIGN KEY (buyerid) REFERENCES ShopUserTable(user_id),
-                            FOREIGN KEY (productnumber) REFERENCES ShopProductTable(productnumber)
-                        )""")
-                    
-                    # Create ShopCategoryTable
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
-                            id SERIAL PRIMARY KEY,
-                            categorynumber BIGINT UNIQUE NOT NULL,
-                            categoryname TEXT NOT NULL,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            categorynumber INTEGER UNIQUE NOT NULL,
-                            categoryname TEXT NOT NULL,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    
-                    # Create PaymentMethodTable
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
-                            id SERIAL PRIMARY KEY,
-                            admin_id BIGINT,
-                            username TEXT,
-                            method_name TEXT UNIQUE NOT NULL,
-                            token_keys_clientid TEXT,
-                            secret_keys TEXT,
-                            activated TEXT DEFAULT 'NO',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            admin_id INTEGER,
-                            username TEXT,
-                            method_name TEXT UNIQUE NOT NULL,
-                            token_keys_clientid TEXT,
-                            secret_keys TEXT,
-                            activated TEXT DEFAULT 'NO',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    
-                    # Create CanvaAccountTable for storing Canva accounts with authkey
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
-                            id SERIAL PRIMARY KEY,
-                            email TEXT UNIQUE NOT NULL,
-                            authkey TEXT NOT NULL,
-                            buyer_id BIGINT DEFAULT NULL,
-                            order_number BIGINT DEFAULT NULL,
-                            status TEXT DEFAULT 'available',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            email TEXT UNIQUE NOT NULL,
-                            authkey TEXT NOT NULL,
-                            buyer_id INTEGER DEFAULT NULL,
-                            order_number INTEGER DEFAULT NULL,
-                            status TEXT DEFAULT 'available',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    
-                    # Create PromotionTable for Buy 1 Get 1 promotion
-                    if USE_POSTGRES:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
-                            id SERIAL PRIMARY KEY,
-                            promo_name TEXT UNIQUE NOT NULL,
-                            is_active INTEGER DEFAULT 0,
-                            sold_count INTEGER DEFAULT 0,
-                            max_count INTEGER DEFAULT 10,
-                            started_at TIMESTAMP DEFAULT NULL,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    else:
-                        cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            promo_name TEXT UNIQUE NOT NULL,
-                            is_active INTEGER DEFAULT 0,
-                            sold_count INTEGER DEFAULT 0,
-                            max_count INTEGER DEFAULT 10,
-                            started_at TIMESTAMP DEFAULT NULL,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )""")
-                    
-                    if not USE_POSTGRES:
-                        db_connection.commit()
-                    
-                    if USE_POSTGRES:
-                        _tables_created = True
-                    
-                    logger.info("All database tables created successfully")
-                    return True
-                    
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Table creation attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    delay = 2 * (attempt + 1)
-                    logger.info(f"Retrying table creation in {delay}s...")
-                    time.sleep(delay)
-        
-        logger.error(f"Table creation failed after {max_retries} attempts: {last_error}")
-        return False
-
-# Initialize tables with background retry
-def _init_tables_background():
-    """Initialize tables in background thread"""
-    # Wait a bit to let Flask start first
-    time.sleep(3)
-    
-    for i in range(5):  # Try 5 times with increasing delay
-        try:
-            if CreateTables.create_all_tables():
-                return
-        except Exception as e:
-            logger.warning(f"Background table init attempt {i+1} failed: {e}")
-        time.sleep(5 * (i + 1))  # 5s, 10s, 15s, 20s, 25s
-
-# IMPORTANT: Always initialize in background to not block Flask startup on Render
-# Render requires port to be open within 60 seconds
-_db_init_started = False
-
+# Dummy for backward compatibility
 def start_background_db_init():
-    """Start database initialization in background - non-blocking"""
-    global _db_init_started
-    if _db_init_started:
-        return
-    _db_init_started = True
-    
-    init_thread = threading.Thread(target=_init_tables_background, daemon=True)
-    init_thread.start()
-    logger.info("Database initialization started in background")
+    """No longer needed with Supabase REST API"""
+    logger.info("Supabase REST API - no background init needed")
+    pass
 
-# DON'T start automatically on import - let store_main.py control when to start
-# This prevents blocking during import
-# start_background_db_init() will be called from store_main.py after Flask is ready
 
-# Helper function to get placeholder for SQL queries
-def get_placeholder():
-    return "%s" if USE_POSTGRES else "?"
+# ============== TABLE CREATION (run once in Supabase SQL Editor) ==============
 
-def execute_query(query, params=None):
-    """Execute query with proper placeholder conversion"""
-    global db_connection, cursor
-    if USE_POSTGRES:
-        # Reconnect if needed
-        try:
-            cursor.execute("SELECT 1")
-        except:
-            db_connection = get_connection()
-            cursor = db_connection.cursor()
-        # Convert ? to %s for PostgreSQL
-        query = query.replace("?", "%s")
-        # Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
-        query = query.replace("INSERT OR IGNORE", "INSERT")
-        if "INSERT" in query and "ON CONFLICT" not in query:
-            # Add ON CONFLICT DO NOTHING for INSERT statements
-            if "VALUES" in query:
-                query = query.rstrip(")") + ") ON CONFLICT DO NOTHING"
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query)
-    return cursor
+def get_table_creation_sql():
+    """Return SQL to create all tables - run this in Supabase SQL Editor"""
+    return """
+-- Run this in Supabase SQL Editor (https://supabase.com/dashboard/project/bjukgqfynvzhyfkjbayo/sql)
+
+-- Users table
+CREATE TABLE IF NOT EXISTS shop_users (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT UNIQUE NOT NULL,
+    username TEXT,
+    wallet INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Admins table
+CREATE TABLE IF NOT EXISTS shop_admins (
+    id SERIAL PRIMARY KEY,
+    admin_id BIGINT UNIQUE NOT NULL,
+    username TEXT,
+    wallet INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Products table
+CREATE TABLE IF NOT EXISTS shop_products (
+    id SERIAL PRIMARY KEY,
+    productnumber BIGINT UNIQUE NOT NULL,
+    admin_id BIGINT NOT NULL,
+    username TEXT,
+    productname TEXT NOT NULL,
+    productdescription TEXT,
+    productprice INTEGER DEFAULT 0,
+    productimagelink TEXT,
+    productdownloadlink TEXT,
+    productkeysfile TEXT,
+    productquantity INTEGER DEFAULT 0,
+    productcategory TEXT DEFAULT 'Default Category',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Orders table
+CREATE TABLE IF NOT EXISTS shop_orders (
+    id SERIAL PRIMARY KEY,
+    buyerid BIGINT NOT NULL,
+    buyerusername TEXT,
+    productname TEXT NOT NULL,
+    productprice TEXT NOT NULL,
+    orderdate TIMESTAMP DEFAULT NOW(),
+    paidmethod TEXT DEFAULT 'NO',
+    productdownloadlink TEXT,
+    productkeys TEXT,
+    buyercomment TEXT,
+    ordernumber BIGINT UNIQUE NOT NULL,
+    productnumber BIGINT NOT NULL,
+    payment_id TEXT
+);
+
+-- Categories table
+CREATE TABLE IF NOT EXISTS shop_categories (
+    id SERIAL PRIMARY KEY,
+    categorynumber BIGINT UNIQUE NOT NULL,
+    categoryname TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Payment methods table
+CREATE TABLE IF NOT EXISTS payment_methods (
+    id SERIAL PRIMARY KEY,
+    admin_id BIGINT,
+    username TEXT,
+    method_name TEXT UNIQUE NOT NULL,
+    token_keys_clientid TEXT,
+    secret_keys TEXT,
+    activated TEXT DEFAULT 'NO',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Canva accounts table
+CREATE TABLE IF NOT EXISTS canva_accounts (
+    id SERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    authkey TEXT NOT NULL,
+    buyer_id BIGINT DEFAULT NULL,
+    order_number BIGINT DEFAULT NULL,
+    status TEXT DEFAULT 'available',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Promotions table
+CREATE TABLE IF NOT EXISTS promotions (
+    id SERIAL PRIMARY KEY,
+    promo_name TEXT UNIQUE NOT NULL,
+    is_active INTEGER DEFAULT 0,
+    sold_count INTEGER DEFAULT 0,
+    max_count INTEGER DEFAULT 10,
+    started_at TIMESTAMP DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Insert default promotion
+INSERT INTO promotions (promo_name, is_active, sold_count, max_count)
+VALUES ('buy1get1', 0, 0, 10)
+ON CONFLICT (promo_name) DO NOTHING;
+
+-- Enable Row Level Security (optional but recommended)
+ALTER TABLE shop_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_admins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_methods ENABLE ROW LEVEL SECURITY;
+ALTER TABLE canva_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE promotions ENABLE ROW LEVEL SECURITY;
+
+-- Create policies to allow all operations (for anon key)
+CREATE POLICY "Allow all" ON shop_users FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON shop_admins FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON shop_products FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON shop_orders FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON shop_categories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON payment_methods FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON canva_accounts FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON promotions FOR ALL USING (true) WITH CHECK (true);
+"""
+
+
+# ============== USER OPERATIONS ==============
 
 class CreateDatas:
-    """Database data creation and insertion operations"""
+    """Data creation operations"""
     
-    @staticmethod
-    def add_user(user_id, username):
-        """Add a new user to the database"""
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if USE_POSTGRES:
-                    cur.execute(
-                        "INSERT INTO ShopUserTable (user_id, username, wallet) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO NOTHING",
-                        (user_id, username, 0)
-                    )
-                else:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO ShopUserTable (user_id, username, wallet) VALUES (?, ?, ?)",
-                        (user_id, username, 0)
-                    )
-                    conn.commit()
-                logger.info(f"User added: {username} (ID: {user_id})")
-                return True
-        except Exception as e:
-            logger.error(f"Error adding user {username}: {e}")
-            return False
-            
-    @staticmethod
-    def add_admin(admin_id, username):
-        """Add a new admin to the database"""
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if USE_POSTGRES:
-                    cur.execute(
-                        "INSERT INTO ShopAdminTable (admin_id, username, wallet) VALUES (%s, %s, %s) ON CONFLICT (admin_id) DO NOTHING",
-                        (admin_id, username, 0)
-                    )
-                else:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO ShopAdminTable (admin_id, username, wallet) VALUES (?, ?, ?)",
-                        (admin_id, username, 0)
-                    )
-                    conn.commit()
-                logger.info(f"Admin added: {username} (ID: {admin_id})")
-                return True
-        except Exception as e:
-            logger.error(f"Error adding admin {username}: {e}")
-            return False
-
-    @staticmethod
-    def add_product(productnumber, admin_id, username):
-        """Add a new product to the database"""
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if USE_POSTGRES:
-                    cur.execute("""
-                        INSERT INTO ShopProductTable 
-                        (productnumber, admin_id, username, productname, productdescription, 
-                         productprice, productimagelink, productdownloadlink, productkeysfile, 
-                         productquantity, productcategory) 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
-                          'https://nil.nil', 'NIL', 0, 'Default Category'))
-                else:
-                    cur.execute("""
-                        INSERT INTO ShopProductTable 
-                        (productnumber, admin_id, username, productname, productdescription, 
-                         productprice, productimagelink, productdownloadlink, productkeysfile, 
-                         productquantity, productcategory) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (productnumber, admin_id, username, 'NIL', 'NIL', 0, 'NIL', 
-                          'https://nil.nil', 'NIL', 0, 'Default Category'))
-                    conn.commit()
-                logger.info(f"Product {productnumber} added by admin {username}")
-                return True
-        except Exception as e:
-            logger.error(f"Error adding product {productnumber}: {e}")
-            return False
-    
-    # Backward compatibility methods
     @staticmethod
     def AddAuser(user_id, username):
-        """Backward compatibility wrapper for add_user"""
-        return CreateDatas.add_user(user_id, username)
+        """Add a new user"""
+        try:
+            supabase.table('shop_users').upsert({
+                'user_id': user_id,
+                'username': username,
+                'wallet': 0
+            }, on_conflict='user_id').execute()
+            logger.info(f"User added/updated: {username} (ID: {user_id})")
+            return True
+        except Exception as e:
+            logger.error(f"Error adding user: {e}")
+            return False
     
     @staticmethod
     def AddAdmin(admin_id, username):
-        """Backward compatibility wrapper for add_admin"""
-        return CreateDatas.add_admin(admin_id, username)
+        """Add a new admin"""
+        try:
+            supabase.table('shop_admins').upsert({
+                'admin_id': admin_id,
+                'username': username,
+                'wallet': 0
+            }, on_conflict='admin_id').execute()
+            logger.info(f"Admin added/updated: {username} (ID: {admin_id})")
+            return True
+        except Exception as e:
+            logger.error(f"Error adding admin: {e}")
+            return False
     
     @staticmethod
     def AddProduct(productnumber, admin_id, username):
-        """Backward compatibility wrapper for add_product"""
-        return CreateDatas.add_product(productnumber, admin_id, username)
-
-    @staticmethod
-    def AddOrder(buyer_id, username, productname, productprice, orderdate, paidmethod, 
-                 productdownloadlink, productkeys, ordernumber, productnumber, payment_id):
-        """Add a new order to the database"""
+        """Add a new product"""
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if USE_POSTGRES:
-                    cur.execute("""
-                        INSERT INTO ShopOrderTable 
-                        (buyerid, buyerusername, productname, productprice, orderdate, 
-                         paidmethod, productdownloadlink, productkeys, buyercomment, 
-                         ordernumber, productnumber, payment_id) 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (buyer_id, username, productname, productprice, orderdate, 
-                          paidmethod, productdownloadlink, productkeys, 'NIL', 
-                          ordernumber, productnumber, payment_id))
-                else:
-                    cur.execute("""
-                        INSERT INTO ShopOrderTable 
-                        (buyerid, buyerusername, productname, productprice, orderdate, 
-                         paidmethod, productdownloadlink, productkeys, buyercomment, 
-                         ordernumber, productnumber, payment_id) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (buyer_id, username, productname, productprice, orderdate, 
-                          paidmethod, productdownloadlink, productkeys, 'NIL', 
-                          ordernumber, productnumber, payment_id))
-                    conn.commit()
-                logger.info(f"Order {ordernumber} added for user {username}")
-                return True
+            supabase.table('shop_products').upsert({
+                'productnumber': productnumber,
+                'admin_id': admin_id,
+                'username': username,
+                'productname': 'New Product',
+                'productprice': 0,
+                'productquantity': 0
+            }, on_conflict='productnumber').execute()
+            return True
         except Exception as e:
-            logger.error(f"Error adding order {ordernumber}: {e}")
+            logger.error(f"Error adding product: {e}")
             return False
-
-    def AddCategory(categorynumber, categoryname):
+    
+    @staticmethod
+    def AddOrder(ordernumber, buyerid, buyerusername, productname, productprice, productnumber, payment_id=None):
+        """Add a new order"""
         try:
-            query = "INSERT INTO ShopCategoryTable (categorynumber, categoryname) VALUES (?, ?)"
-            execute_with_new_connection(query, (categorynumber, categoryname))
+            supabase.table('shop_orders').insert({
+                'ordernumber': ordernumber,
+                'buyerid': buyerid,
+                'buyerusername': buyerusername,
+                'productname': productname,
+                'productprice': str(productprice),
+                'productnumber': productnumber,
+                'payment_id': payment_id,
+                'paidmethod': 'PENDING'
+            }).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error adding order: {e}")
+            return False
+    
+    @staticmethod
+    def AddCategory(categorynumber, categoryname):
+        """Add a new category"""
+        try:
+            supabase.table('shop_categories').upsert({
+                'categorynumber': categorynumber,
+                'categoryname': categoryname
+            }, on_conflict='categorynumber').execute()
+            return True
         except Exception as e:
             logger.error(f"Error adding category: {e}")
-
-    def AddEmptyRow():
-        query = "INSERT INTO PaymentMethodTable (admin_id, username, method_name, activated) VALUES ('None', 'None', 'None', 'None')"
-        execute_with_new_connection(query)
-    
-    def AddCryptoPaymentMethod(id, username, token_keys_clientid, secret_keys, method_name):
-        try:
-            query = f"UPDATE PaymentMethodTable SET admin_id = ?, username = ?, token_keys_clientid = ?, secret_keys = ?, activated = 'NO' WHERE method_name = '{method_name}'"
-            execute_with_new_connection(query, (id, username, token_keys_clientid, secret_keys))
-        except Exception as e:
-            logger.error(f"Error adding crypto payment: {e}")
-
-    def UpdateOrderConfirmed(paidmethod, ordernumber):
-        try:
-            query = "UPDATE ShopOrderTable SET paidmethod = ? WHERE ordernumber = ?"
-            execute_with_new_connection(query, (paidmethod, ordernumber))
-        except Exception as e:
-            logger.error(f"Error updating order confirmed: {e}")
-
-    def UpdatePaymentMethodToken(id, username, token_keys_clientid, method_name):
-        try:
-            query = f"UPDATE PaymentMethodTable SET admin_id = '{id}', username = '{username}', token_keys_clientid = '{token_keys_clientid}' WHERE method_name = '{method_name}'"
-            execute_with_new_connection(query)
-        except Exception as e:
-            logger.error(f"Error updating payment token: {e}")
-
-    def UpdatePaymentMethodSecret(id, username, secret_keys, method_name):
-        try:
-            query = f"UPDATE PaymentMethodTable SET admin_id = '{id}', username = '{username}', secret_keys = '{secret_keys}' WHERE method_name = '{method_name}'"
-            execute_with_new_connection(query)
-        except Exception as e:
-            logger.error(f"Error updating payment secret: {e}")
-
-    def Update_A_Category(categoryname, categorynumber):
-        try:
-            query = "UPDATE ShopCategoryTable SET categoryname = ? WHERE categorynumber = ?"
-            execute_with_new_connection(query, (categoryname, categorynumber))
-        except Exception as e:
-            logger.error(f"Error updating category: {e}")
-
-    def UpdateOrderComment(buyercomment, ordernumber):
-        try:
-            query = "UPDATE ShopOrderTable SET buyercomment = ? WHERE ordernumber = ?"
-            execute_with_new_connection(query, (buyercomment, ordernumber))
-        except Exception as e:
-            logger.error(f"Error updating order comment: {e}")
-
-    def UpdateOrderPaymentMethod(paidmethod, ordernumber):
-        try:
-            query = "UPDATE ShopOrderTable SET paidmethod = ? WHERE ordernumber = ?"
-            execute_with_new_connection(query, (paidmethod, ordernumber))
-        except Exception as e:
-            logger.error(f"Error updating order payment method: {e}")
-
-    def UpdateOrderPurchasedKeys(productkeys, ordernumber):
-        try:
-            query = "UPDATE ShopOrderTable SET productkeys = ? WHERE ordernumber = ?"
-            execute_with_new_connection(query, (productkeys, ordernumber))
-        except Exception as e:
-            logger.error(f"Error updating order keys: {e}")
-
-    def AddPaymentMethod(id, username, method_name):
-        query = "INSERT INTO PaymentMethodTable (admin_id, username, method_name, activated) VALUES (?, ?, ?, 'YES')"
-        execute_with_new_connection(query, (id, username, method_name))
-
-    def UpdateProductName(productname, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productname = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productname, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product name: {e}")
-
-    def UpdateProductDescription(productdescription, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productdescription = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productdescription, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product description: {e}")
-    
-    def UpdateProductPrice(productprice, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productprice = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productprice, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product price: {e}")
-    
-    def UpdateProductproductimagelink(productimagelink, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productimagelink = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productimagelink, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product image: {e}")
-
-    def UpdateProductproductdownloadlink(productdownloadlink, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productdownloadlink = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productdownloadlink, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product download link: {e}")
-    
-    def UpdateProductKeysFile(productkeysfile, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productkeysfile = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productkeysfile, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product keys file: {e}")
-    
-    def UpdateProductQuantity(productquantity, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productquantity = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productquantity, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product quantity: {e}")
-    
-    def UpdateProductCategory(productcategory, productnumber):
-        try:
-            query = "UPDATE ShopProductTable SET productcategory = ? WHERE productnumber = ?"
-            execute_with_new_connection(query, (productcategory, productnumber))
-        except Exception as e:
-            logger.error(f"Error updating product category: {e}")
-
-    def Update_All_ProductCategory(new_category, productcategory):
-        try:
-            query = "UPDATE ShopProductTable SET productcategory = ? WHERE productcategory = ?"
-            execute_with_new_connection(query, (new_category, productcategory))
-        except Exception as e:
-            logger.error(f"Error updating all product categories: {e}")
-
-class GetDataFromDB:
-    """Database query operations"""
+            return False
     
     @staticmethod
-    def GetUserWalletInDB(userid):
-        """Get user wallet balance from database"""
+    def UpdateProductName(name, productnumber):
         try:
-            result = execute_with_new_connection(
-                "SELECT wallet FROM ShopUserTable WHERE user_id = ?", 
-                (userid,), 
-                fetch='one'
-            )
-            return result[0] if result else 0
+            supabase.table('shop_products').update({'productname': name}).eq('productnumber', productnumber).execute()
+            return True
         except Exception as e:
-            logger.error(f"Error getting user wallet for {userid}: {e}")
-            return 0
-        
-    def GetUserNameInDB(userid):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT username FROM ShopUserTable WHERE user_id = '{userid}'",
-                fetch='one'
-            )
-            return result[0] if result else ""
-        except Exception as e:
-            logger.error(f"Error getting username: {e}")
-            return ""
-        
-    def GetAdminNameInDB(userid):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT username FROM ShopAdminTable WHERE admin_id = '{userid}'",
-                fetch='one'
-            )
-            return result[0] if result else ""
-        except Exception as e:
-            logger.error(f"Error getting admin name: {e}")
-            return ""
-        
-    def GetUserIDsInDB():
-        try:
-            result = execute_with_new_connection(
-                "SELECT user_id FROM ShopUserTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting user IDs: {e}")
-            return []
-
-    def GetProductName(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productname FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product name: {e}")
-            return None
-
-    def GetProductDescription(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productdescription FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product description: {e}")
-            return None
-
-    def GetProductPrice(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productprice FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product price: {e}")
-            return None
-        
-    def GetProductImageLink(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productimagelink FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product image: {e}")
-            return None
+            logger.error(f"Error updating product name: {e}")
+            return False
     
-    def GetProductDownloadLink(productnumber):
+    @staticmethod
+    def UpdateProductDescription(description, productnumber):
         try:
-            result = execute_with_new_connection(
-                f"SELECT productdownloadlink FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
+            supabase.table('shop_products').update({'productdescription': description}).eq('productnumber', productnumber).execute()
+            return True
         except Exception as e:
-            logger.error(f"Error getting product download link: {e}")
-            return None
+            logger.error(f"Error updating product description: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateProductPrice(price, productnumber):
+        try:
+            supabase.table('shop_products').update({'productprice': int(price)}).eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating product price: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateProductQuantity(quantity, productnumber):
+        try:
+            supabase.table('shop_products').update({'productquantity': int(quantity)}).eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating product quantity: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateProductproductimagelink(imagelink, productnumber):
+        try:
+            supabase.table('shop_products').update({'productimagelink': imagelink}).eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating product image: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateProductproductdownloadlink(downloadlink, productnumber):
+        try:
+            supabase.table('shop_products').update({'productdownloadlink': downloadlink}).eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating product download link: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateProductKeysFile(keysfile, productnumber):
+        try:
+            supabase.table('shop_products').update({'productkeysfile': keysfile}).eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating product keys file: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateProductCategory(category, productnumber):
+        try:
+            supabase.table('shop_products').update({'productcategory': category}).eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating product category: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateOrderPurchasedKeys(keys, ordernumber):
+        try:
+            supabase.table('shop_orders').update({'productkeys': keys}).eq('ordernumber', ordernumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating order keys: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateOrderPaymentMethod(method, ordernumber):
+        try:
+            supabase.table('shop_orders').update({'paidmethod': method}).eq('ordernumber', ordernumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating order payment method: {e}")
+            return False
+    
+    @staticmethod
+    def UpdateOrderComment(comment, ordernumber):
+        try:
+            supabase.table('shop_orders').update({'buyercomment': comment}).eq('ordernumber', ordernumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating order comment: {e}")
+            return False
+    
+    @staticmethod
+    def DeleteProduct(productnumber):
+        try:
+            supabase.table('shop_products').delete().eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting product: {e}")
+            return False
 
-    def GetProductNumber(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productnumber FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product number: {e}")
-            return None
 
-    def GetProductQuantity(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productquantity FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product quantity: {e}")
-            return None
+# ============== GET DATA OPERATIONS ==============
 
-    def GetProduct_A_Category(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product category: {e}")
-            return None
-
-    def Get_A_CategoryName(categorynumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT categoryname FROM ShopCategoryTable WHERE categorynumber = '{categorynumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting category name: {e}")
-            return None
-
-    def GetCategoryIDsInDB():
-        try:
-            result = execute_with_new_connection(
-                "SELECT categorynumber, categoryname FROM ShopCategoryTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting category IDs: {e}")
-            return []
-
-    def GetCategoryNumProduct(productcategory):
-        try:
-            return execute_with_new_connection(
-                f"SELECT COUNT(*) FROM ShopProductTable WHERE productcategory = '{productcategory}'",
-                fetch='all'
-            )
-        except Exception as e:
-            logger.error(f"Error getting category product count: {e}")
-            return None
-        
-    def GetProduct_A_AdminID(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT admin_id FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting product admin ID: {e}")
-            return None
-
+class GetDataFromDB:
+    """Data retrieval operations"""
+    
+    @staticmethod
     def GetAdminIDsInDB():
+        """Get all admin IDs"""
         try:
-            result = execute_with_new_connection(
-                "SELECT admin_id FROM ShopAdminTable",
-                fetch='all'
-            )
-            return result if result else []
+            result = supabase.table('shop_admins').select('admin_id, username').execute()
+            return [(r['admin_id'], r['username']) for r in result.data] if result.data else []
         except Exception as e:
-            logger.error(f"Error getting admin IDs: {e}")
+            logger.error(f"Error getting admins: {e}")
             return []
-
-    def GetAdminUsernamesInDB():
+    
+    @staticmethod
+    def GetUserIDsInDB():
+        """Get all user IDs"""
         try:
-            result = execute_with_new_connection(
-                "SELECT username FROM ShopAdminTable",
-                fetch='all'
-            )
-            return result if result else []
+            result = supabase.table('shop_users').select('user_id').execute()
+            return [(r['user_id'],) for r in result.data] if result.data else []
         except Exception as e:
-            logger.error(f"Error getting admin usernames: {e}")
+            logger.error(f"Error getting users: {e}")
             return []
-
-    def GetProductNumberName():
-        try:
-            result = execute_with_new_connection(
-                "SELECT DISTINCT productnumber, productname FROM ShopProductTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting product number/name: {e}")
-            return []
-
-    def GetProductInfos():
-        try:
-            result = execute_with_new_connection(
-                "SELECT DISTINCT productnumber, productname, productprice FROM ShopProductTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting product infos: {e}")
-            return []
-
-    def GetProductInfo():
-        try:
-            result = execute_with_new_connection(
-                "SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting product info: {e}")
-            return []
-
-    def GetProductInfoByCTGName(productcategory):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productcategory = '{productcategory}'",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting product info by category: {e}")
-            return []
-        
-    def GetProductInfoByPName(productnumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory FROM ShopProductTable WHERE productnumber = '{productnumber}'",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting product info by number: {e}")
-            return []
-        
+    
+    @staticmethod
     def GetUsersInfo():
+        """Get all users info"""
         try:
-            result = execute_with_new_connection(
-                "SELECT DISTINCT user_id, username, wallet FROM ShopUserTable",
-                fetch='all'
-            )
-            return result if result else []
+            result = supabase.table('shop_users').select('user_id, username, wallet').execute()
+            return [(r['user_id'], r['username'], r['wallet']) for r in result.data] if result.data else []
         except Exception as e:
             logger.error(f"Error getting users info: {e}")
             return []
     
+    @staticmethod
     def GetUsersInfoWithDate():
+        """Get all users info with date"""
         try:
-            # Thử query với created_at trước
-            result = execute_with_new_connection(
-                "SELECT DISTINCT user_id, username, wallet, created_at FROM ShopUserTable ORDER BY created_at DESC",
-                fetch='all'
-            )
-            return result if result else []
+            result = supabase.table('shop_users').select('user_id, username, wallet, created_at').execute()
+            return [(r['user_id'], r['username'], r['wallet'], r['created_at']) for r in result.data] if result.data else []
         except Exception as e:
-            # Nếu không có cột created_at, query không có cột đó
-            try:
-                result = execute_with_new_connection(
-                    "SELECT DISTINCT user_id, username, wallet FROM ShopUserTable",
-                    fetch='all'
-                )
-                # Thêm None cho created_at
-                if result:
-                    return [(r[0], r[1], r[2], None) for r in result]
-                return []
-            except Exception as e2:
-                logger.error(f"Error getting users info with date: {e2}")
-                return []
-        
-    def AllUsers():
+            logger.error(f"Error getting users info with date: {e}")
+            return []
+    
+    @staticmethod
+    def GetProductInfo():
+        """Get all products"""
         try:
-            return execute_with_new_connection(
-                "SELECT COUNT(user_id) FROM ShopUserTable",
-                fetch='all'
-            ) or 0
+            result = supabase.table('shop_products').select('productnumber, productname, productprice, productdescription, productimagelink, productdownloadlink, productquantity, productcategory').execute()
+            return [(r['productnumber'], r['productname'], r['productprice'], r['productdescription'], 
+                    r['productimagelink'], r['productdownloadlink'], r['productquantity'], r['productcategory']) 
+                    for r in result.data] if result.data else []
         except Exception as e:
-            logger.error(f"Error counting users: {e}")
+            logger.error(f"Error getting products: {e}")
+            return []
+    
+    @staticmethod
+    def GetProductInfoByPName(productnumber):
+        """Get product by product number"""
+        try:
+            result = supabase.table('shop_products').select('*').eq('productnumber', productnumber).execute()
+            if result.data:
+                r = result.data[0]
+                return [(r['productnumber'], r['productname'], r['productprice'], r['productdescription'],
+                        r['productimagelink'], r['productdownloadlink'], r['productquantity'], r['productcategory'])]
+            return []
+        except Exception as e:
+            logger.error(f"Error getting product by number: {e}")
+            return []
+    
+    @staticmethod
+    def GetProductName(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productname').eq('productnumber', productnumber).execute()
+            return result.data[0]['productname'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetProductPrice(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productprice').eq('productnumber', productnumber).execute()
+            return result.data[0]['productprice'] if result.data else 0
+        except:
             return 0
     
+    @staticmethod
+    def GetProductDescription(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productdescription').eq('productnumber', productnumber).execute()
+            return result.data[0]['productdescription'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetProductQuantity(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productquantity').eq('productnumber', productnumber).execute()
+            return result.data[0]['productquantity'] if result.data else 0
+        except:
+            return 0
+    
+    @staticmethod
+    def GetProductImageLink(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productimagelink').eq('productnumber', productnumber).execute()
+            return result.data[0]['productimagelink'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetProductDownloadLink(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productdownloadlink').eq('productnumber', productnumber).execute()
+            return result.data[0]['productdownloadlink'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetProductNumber(productnumber):
+        try:
+            result = supabase.table('shop_products').select('productnumber').eq('productnumber', productnumber).execute()
+            return result.data[0]['productnumber'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetProductNumberName():
+        """Get product numbers and names"""
+        try:
+            result = supabase.table('shop_products').select('productnumber, productname').execute()
+            return [(r['productnumber'], r['productname']) for r in result.data] if result.data else []
+        except:
+            return []
+    
+    @staticmethod
+    def GetProductIDs():
+        """Get all product IDs"""
+        try:
+            result = supabase.table('shop_products').select('productnumber').execute()
+            return [(r['productnumber'],) for r in result.data] if result.data else []
+        except:
+            return []
+    
+    @staticmethod
+    def GetCategoryIDsInDB():
+        """Get all categories"""
+        try:
+            result = supabase.table('shop_categories').select('categorynumber, categoryname').execute()
+            return [(r['categorynumber'], r['categoryname']) for r in result.data] if result.data else []
+        except:
+            return []
+    
+    @staticmethod
+    def Get_A_CategoryName(categorynumber):
+        """Get category name by number"""
+        try:
+            result = supabase.table('shop_categories').select('categoryname').eq('categorynumber', categorynumber).execute()
+            return result.data[0]['categoryname'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetOrderDetails(ordernumber):
+        """Get order details"""
+        try:
+            result = supabase.table('shop_orders').select('*').eq('ordernumber', ordernumber).execute()
+            if result.data:
+                r = result.data[0]
+                return (r['ordernumber'], r['buyerid'], r['buyerusername'], r['productname'],
+                       r['productprice'], r['paidmethod'], r['productdownloadlink'], r['productkeys'],
+                       r['buyercomment'], r['productnumber'])
+            return None
+        except:
+            return None
+    
+    @staticmethod
+    def GetAllUnfirmedOrdersUser(user_id):
+        """Get pending orders"""
+        try:
+            result = supabase.table('shop_orders').select('*').eq('paidmethod', 'PENDING').execute()
+            return result.data if result.data else []
+        except:
+            return []
+    
+    @staticmethod
+    def GetPaymentMethodTokenKeysCleintID(method_name):
+        """Get payment method token"""
+        try:
+            result = supabase.table('payment_methods').select('token_keys_clientid').eq('method_name', method_name).execute()
+            return result.data[0]['token_keys_clientid'] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def GetPaymentMethodsAll(method_name):
+        """Get all payment method data"""
+        try:
+            result = supabase.table('payment_methods').select('*').eq('method_name', method_name).execute()
+            return result.data[0] if result.data else None
+        except:
+            return None
+    
+    @staticmethod
+    def AllUsers():
+        return GetDataFromDB.GetUsersInfo()
+    
+    @staticmethod
     def AllAdmins():
-        try:
-            return execute_with_new_connection(
-                "SELECT COUNT(admin_id) FROM ShopAdminTable",
-                fetch='all'
-            ) or 0
-        except Exception as e:
-            logger.error(f"Error counting admins: {e}")
-            return 0
-
+        return GetDataFromDB.GetAdminIDsInDB()
+    
+    @staticmethod
     def AllProducts():
-        try:
-            return execute_with_new_connection(
-                "SELECT COUNT(productnumber) FROM ShopProductTable",
-                fetch='all'
-            ) or 0
-        except Exception as e:
-            logger.error(f"Error counting products: {e}")
-            return 0
-
+        return GetDataFromDB.GetProductInfo()
+    
+    @staticmethod
     def AllOrders():
         try:
-            return execute_with_new_connection(
-                "SELECT COUNT(buyerid) FROM ShopOrderTable",
-                fetch='all'
-            ) or 0
-        except Exception as e:
-            logger.error(f"Error counting orders: {e}")
-            return 0
-             
-    def GetAdminsInfo():
-        try:
-            result = execute_with_new_connection(
-                "SELECT DISTINCT admin_id, username, wallet FROM ShopAdminTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting admins info: {e}")
-            return []
-        
-    def GetOrderInfo():
-        try:
-            result = execute_with_new_connection(
-                "SELECT DISTINCT ordernumber, productname, buyerusername, orderdate FROM ShopOrderTable ORDER BY orderdate DESC",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting order info: {e}")
-            return []
-
-    def GetPaymentMethods():
-        try:
-            return execute_with_new_connection(
-                "SELECT DISTINCT method_name, activated, username FROM PaymentMethodTable",
-                fetch='all'
-            )
-        except Exception as e:
-            logger.error(f"Error getting payment methods: {e}")
-            return None
-
-    def GetPaymentMethodsAll(method_name):
-        try:
-            return execute_with_new_connection(
-                f"SELECT DISTINCT method_name, token_keys_clientid, secret_keys FROM PaymentMethodTable WHERE method_name = '{method_name}'",
-                fetch='all'
-            )
-        except Exception as e:
-            logger.error(f"Error getting payment method details: {e}")
-            return None
- 
-    def GetPaymentMethodTokenKeysCleintID(method_name):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT token_keys_clientid FROM PaymentMethodTable WHERE method_name = '{method_name}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting payment token: {e}")
-            return None
-
-    def GetPaymentMethodSecretKeys(method_name):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT secret_keys FROM PaymentMethodTable WHERE method_name = '{method_name}'",
-                fetch='one'
-            )
-            return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting payment secret: {e}")
-            return None
-
-    def GetAllPaymentMethodsInDB():
-        try:
-            return execute_with_new_connection(
-                "SELECT DISTINCT method_name FROM PaymentMethodTable",
-                fetch='all'
-            )
-        except Exception as e:
-            logger.error(f"Error getting all payment methods: {e}")
-            return None
-        
-    def GetProductCategories():
-        try:
-            return execute_with_new_connection(
-                "SELECT DISTINCT productcategory FROM ShopProductTable",
-                fetch='all'
-            ) or "Default Category"
-        except Exception as e:
-            logger.error(f"Error getting product categories: {e}")
-            return "Default Category"
-        
-    def GetProductIDs():
-        try:
-            result = execute_with_new_connection(
-                "SELECT productnumber FROM ShopProductTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting product IDs: {e}")
-            return []
-    
-    def GetOrderDetails(ordernumber):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber FROM ShopOrderTable WHERE ordernumber = '{ordernumber}' AND paidmethod != 'NO'",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting order details: {e}")
-            return []
-        
-    def GetOrderIDs_Buyer(buyerid):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT ordernumber FROM ShopOrderTable WHERE buyerid = '{buyerid}' AND paidmethod != 'NO'",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting buyer order IDs: {e}")
-            return []
-
-    def GetOrderIDs():
-        try:
-            result = execute_with_new_connection(
-                "SELECT ordernumber FROM ShopOrderTable",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting order IDs: {e}")
-            return []
-
-    def GetAllUnfirmedOrdersUser(buyerid):
-        try:
-            result = execute_with_new_connection(
-                f"SELECT DISTINCT ordernumber, productname, buyerusername, payment_id, productnumber FROM ShopOrderTable WHERE paidmethod = 'NO' AND buyerid = '{buyerid}' AND payment_id != ordernumber",
-                fetch='all'
-            )
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Error getting unconfirmed orders: {e}")
+            result = supabase.table('shop_orders').select('*').execute()
+            return result.data if result.data else []
+        except:
             return []
 
 
-class CleanData:
-    def __init__(self) -> None:
-        pass
-
-    def CleanShopUserTable():
-        try:
-            execute_with_new_connection("DELETE FROM ShopUserTable")
-        except Exception as e:
-            logger.error(f"Error cleaning user table: {e}")
-
-    def CleanShopProductTable():
-        try:
-            execute_with_new_connection("DELETE FROM ShopProductTable")
-        except Exception as e:
-            logger.error(f"Error cleaning product table: {e}")
-    
-    def delete_an_order(ordernumber):
-        try:
-            execute_with_new_connection(
-                "DELETE FROM ShopOrderTable WHERE ordernumber = ?",
-                (ordernumber,)
-            )
-        except Exception as e:
-            logger.error(f"Error deleting order: {e}")
-    
-    def delete_all_orders():
-        """Delete all orders from database"""
-        try:
-            execute_with_new_connection("DELETE FROM ShopOrderTable")
-            logger.info("All orders deleted")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting all orders: {e}")
-            return False
-
-    def delete_a_product(productnumber):
-        try:
-            execute_with_new_connection(
-                "DELETE FROM ShopProductTable WHERE productnumber = ?",
-                (productnumber,)
-            )
-        except Exception as e:
-            logger.error(f"Error deleting product: {e}")
-
-    def delete_a_payment_method(method_name):
-        try:
-            execute_with_new_connection(
-                "DELETE FROM PaymentMethodTable WHERE method_name = ?",
-                (method_name,)
-            )
-        except Exception as e:
-            logger.error(f"Error deleting payment method: {e}")
-
-    def delete_a_category(categorynumber):
-        try:
-            execute_with_new_connection(
-                "DELETE FROM ShopCategoryTable WHERE categorynumber = ?",
-                (categorynumber,)
-            )
-        except Exception as e:
-            logger.error(f"Error deleting category: {e}")
-
-
-# ============== PROMOTION MANAGEMENT ==============
-
-class PromotionDB:
-    """Database operations for Buy 1 Get 1 promotion"""
-    
-    PROMO_NAME = "buy1get1"
-    
-    @staticmethod
-    def init_promotion():
-        """Initialize promotion record if not exists"""
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if USE_POSTGRES:
-                    cur.execute(
-                        "INSERT INTO PromotionTable (promo_name, is_active, sold_count, max_count) VALUES (%s, 0, 0, 10) ON CONFLICT (promo_name) DO NOTHING",
-                        (PromotionDB.PROMO_NAME,)
-                    )
-                else:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO PromotionTable (promo_name, is_active, sold_count, max_count) VALUES (?, 0, 0, 10)",
-                        (PromotionDB.PROMO_NAME,)
-                    )
-                    conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error initializing promotion: {e}")
-            return False
-    
-    @staticmethod
-    def is_active():
-        """Check if promotion is active"""
-        try:
-            query = "SELECT is_active FROM PromotionTable WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (PromotionDB.PROMO_NAME,))
-                result = cur.fetchone()
-                return result[0] == 1 if result else False
-        except Exception as e:
-            logger.error(f"Error checking promotion status: {e}")
-            return False
-    
-    @staticmethod
-    def get_sold_count():
-        """Get number of accounts sold during this promotion"""
-        try:
-            query = "SELECT sold_count FROM PromotionTable WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (PromotionDB.PROMO_NAME,))
-                result = cur.fetchone()
-                return result[0] if result else 0
-        except Exception as e:
-            logger.error(f"Error getting promotion sold count: {e}")
-            return 0
-    
-    @staticmethod
-    def increment_sold_count(count=1):
-        """Increment sold count when account is sold"""
-        try:
-            query = "UPDATE PromotionTable SET sold_count = sold_count + ? WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (count, PromotionDB.PROMO_NAME))
-                if not USE_POSTGRES:
-                    conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error incrementing sold count: {e}")
-            return False
-    
-    @staticmethod
-    def enable_promotion():
-        """Enable promotion and reset sold count to 0"""
-        try:
-            query = "UPDATE PromotionTable SET is_active = 1, sold_count = 0, started_at = CURRENT_TIMESTAMP WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (PromotionDB.PROMO_NAME,))
-                if not USE_POSTGRES:
-                    conn.commit()
-                logger.info("Promotion enabled and counter reset")
-                return True
-        except Exception as e:
-            logger.error(f"Error enabling promotion: {e}")
-            return False
-    
-    @staticmethod
-    def disable_promotion():
-        """Disable promotion"""
-        try:
-            query = "UPDATE PromotionTable SET is_active = 0 WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (PromotionDB.PROMO_NAME,))
-                if not USE_POSTGRES:
-                    conn.commit()
-                logger.info("Promotion disabled")
-                return True
-        except Exception as e:
-            logger.error(f"Error disabling promotion: {e}")
-            return False
-    
-    @staticmethod
-    def get_promotion_info():
-        """Get full promotion info"""
-        try:
-            query = "SELECT is_active, sold_count, max_count, started_at FROM PromotionTable WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (PromotionDB.PROMO_NAME,))
-                result = cur.fetchone()
-                if result:
-                    return {
-                        "is_active": result[0] == 1,
-                        "sold_count": result[1],
-                        "max_count": result[2],
-                        "started_at": result[3]
-                    }
-                return None
-        except Exception as e:
-            logger.error(f"Error getting promotion info: {e}")
-            return None
-    
-    @staticmethod
-    def set_max_count(max_count):
-        """Set maximum promotion slots"""
-        try:
-            query = "UPDATE PromotionTable SET max_count = ? WHERE promo_name = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (max_count, PromotionDB.PROMO_NAME))
-                if not USE_POSTGRES:
-                    conn.commit()
-                logger.info(f"Promotion max count set to {max_count}")
-                return True
-        except Exception as e:
-            logger.error(f"Error setting max count: {e}")
-            return False
-
-# Initialize promotion record
-PromotionDB.init_promotion()
-
-
-# ============== CANVA ACCOUNT MANAGEMENT ==============
+# ============== CANVA ACCOUNT OPERATIONS ==============
 
 class CanvaAccountDB:
-    """Database operations for Canva accounts with TempMail authkey"""
+    """Canva account management"""
     
     @staticmethod
     def add_account(email, authkey):
-        """Add a new Canva account to database"""
+        """Add a Canva account"""
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                if USE_POSTGRES:
-                    cur.execute(
-                        "INSERT INTO CanvaAccountTable (email, authkey, status) VALUES (%s, %s, 'available') ON CONFLICT (email) DO NOTHING",
-                        (email, authkey)
-                    )
-                else:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO CanvaAccountTable (email, authkey, status) VALUES (?, ?, 'available')",
-                        (email, authkey)
-                    )
-                    conn.commit()
-                logger.info(f"Canva account added: {email}")
-                return True
+            supabase.table('canva_accounts').upsert({
+                'email': email,
+                'authkey': authkey,
+                'status': 'available'
+            }, on_conflict='email').execute()
+            return True
         except Exception as e:
-            logger.error(f"Error adding Canva account {email}: {e}")
+            logger.error(f"Error adding Canva account: {e}")
             return False
     
     @staticmethod
     def get_available_accounts(count=1):
-        """Get available Canva accounts"""
+        """Get available accounts"""
         try:
-            query = "SELECT id, email, authkey FROM CanvaAccountTable WHERE status = 'available' LIMIT ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (count,))
-                return cur.fetchall()
-        except Exception as e:
-            logger.error(f"Error getting available accounts: {e}")
+            result = supabase.table('canva_accounts').select('*').eq('status', 'available').limit(count).execute()
+            return [(r['id'], r['email'], r['authkey']) for r in result.data] if result.data else []
+        except:
             return []
-    
-    @staticmethod
-    def assign_account_to_buyer(account_id, buyer_id, order_number):
-        """Assign account to a buyer after purchase"""
-        try:
-            query = "UPDATE CanvaAccountTable SET buyer_id = ?, order_number = ?, status = 'sold' WHERE id = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (buyer_id, order_number, account_id))
-                if not USE_POSTGRES:
-                    conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error assigning account: {e}")
-            return False
-    
-    @staticmethod
-    def get_authkey_by_email(email):
-        """Get authkey for an email (for OTP retrieval)"""
-        try:
-            query = "SELECT authkey FROM CanvaAccountTable WHERE email = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (email,))
-                result = cur.fetchone()
-                return result[0] if result else None
-        except Exception as e:
-            logger.error(f"Error getting authkey for {email}: {e}")
-            return None
-    
-    @staticmethod
-    def get_buyer_accounts(buyer_id):
-        """Get all accounts owned by a buyer"""
-        try:
-            query = "SELECT email, order_number, created_at FROM CanvaAccountTable WHERE buyer_id = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (buyer_id,))
-                return cur.fetchall()
-        except Exception as e:
-            logger.error(f"Error getting buyer accounts: {e}")
-            return []
-    
-    @staticmethod
-    def remove_buyer_from_account(email, buyer_id):
-        """Remove buyer from account (user deletes from their list)"""
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                # Verify the account belongs to this buyer
-                query1 = "SELECT id FROM CanvaAccountTable WHERE email = ? AND buyer_id = ?"
-                query2 = "UPDATE CanvaAccountTable SET buyer_id = NULL, status = 'deleted_by_user' WHERE email = ? AND buyer_id = ?"
-                if USE_POSTGRES:
-                    query1 = query1.replace("?", "%s")
-                    query2 = query2.replace("?", "%s")
-                
-                cur.execute(query1, (email, buyer_id))
-                result = cur.fetchone()
-                if not result:
-                    return False
-                
-                cur.execute(query2, (email, buyer_id))
-                if not USE_POSTGRES:
-                    conn.commit()
-                logger.info(f"User {buyer_id} removed account {email} from their list")
-                return True
-        except Exception as e:
-            logger.error(f"Error removing buyer from account: {e}")
-            return False
     
     @staticmethod
     def get_account_count():
         """Get count of available accounts"""
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'available'")
-                result = cur.fetchone()
-                return result[0] if result else 0
-        except Exception as e:
-            logger.error(f"Error counting accounts: {e}")
+            result = supabase.table('canva_accounts').select('id', count='exact').eq('status', 'available').execute()
+            return result.count if result.count else 0
+        except:
             return 0
     
     @staticmethod
-    def get_sold_count():
-        """Get count of sold accounts (for promotion tracking)"""
+    def assign_account_to_buyer(account_id, buyer_id, order_number):
+        """Assign account to buyer"""
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT COUNT(*) FROM CanvaAccountTable WHERE status = 'sold'")
-                result = cur.fetchone()
-                return result[0] if result else 0
+            supabase.table('canva_accounts').update({
+                'buyer_id': buyer_id,
+                'order_number': order_number,
+                'status': 'sold'
+            }).eq('id', account_id).execute()
+            return True
         except Exception as e:
-            logger.error(f"Error counting sold accounts: {e}")
-            return 0
+            logger.error(f"Error assigning account: {e}")
+            return False
+    
+    @staticmethod
+    def get_buyer_accounts(buyer_id):
+        """Get accounts owned by buyer"""
+        try:
+            result = supabase.table('canva_accounts').select('*').eq('buyer_id', buyer_id).execute()
+            return [(r['id'], r['email'], r['authkey'], r['status']) for r in result.data] if result.data else []
+        except:
+            return []
+    
+    @staticmethod
+    def get_authkey_by_email(email):
+        """Get authkey for email"""
+        try:
+            result = supabase.table('canva_accounts').select('authkey').eq('email', email).execute()
+            return result.data[0]['authkey'] if result.data else None
+        except:
+            return None
     
     @staticmethod
     def get_all_accounts():
-        """Get all accounts (for admin)"""
+        """Get all accounts"""
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT id, email, authkey, buyer_id, order_number, status, created_at FROM CanvaAccountTable"
-                )
-                return cur.fetchall()
-        except Exception as e:
-            logger.error(f"Error getting all accounts: {e}")
+            result = supabase.table('canva_accounts').select('*').execute()
+            return [(r['id'], r['email'], r['authkey'], r.get('buyer_id'), r.get('order_number'), r['status']) 
+                    for r in result.data] if result.data else []
+        except:
             return []
     
     @staticmethod
     def delete_account(account_id):
-        """Delete an account"""
+        """Delete account"""
         try:
-            query = "DELETE FROM CanvaAccountTable WHERE id = ?"
-            if USE_POSTGRES:
-                query = query.replace("?", "%s")
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, (account_id,))
-                if not USE_POSTGRES:
-                    conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Error deleting account: {e}")
+            supabase.table('canva_accounts').delete().eq('id', account_id).execute()
+            return True
+        except:
             return False
     
     @staticmethod
-    def import_emails_only(file_content):
-        """Import emails only (for Premium - no authkey needed)
-        
-        Format: one email per line
-        """
-        count = 0
+    def remove_buyer_from_account(email, buyer_id):
+        """Remove buyer from account (make available again)"""
         try:
-            lines = file_content.strip().split('\n')
-            for line in lines:
-                email = line.strip()
-                if email and '@' in email:
-                    # Add with empty authkey (Premium doesn't need it)
-                    if CanvaAccountDB.add_account(email, "PREMIUM"):
-                        count += 1
-            return count
-        except Exception as e:
-            logger.error(f"Error importing emails: {e}")
-            return count
+            supabase.table('canva_accounts').update({
+                'buyer_id': None,
+                'order_number': None,
+                'status': 'available'
+            }).eq('email', email).eq('buyer_id', buyer_id).execute()
+            return True
+        except:
+            return False
     
     @staticmethod
-    def import_accounts_from_file(file_content):
-        """Import accounts from file content (legacy - with authkey)
-        
-        Supported formats:
-        1. email|authkey (one per line)
-        2. Block format:
-           email1
-           email2
-           
-           authkey1
-           authkey2
-        """
+    def import_emails_only(content):
+        """Import emails from content (one per line: email|authkey)"""
         count = 0
-        try:
-            content = file_content.strip()
-            
-            # Check if it's pipe-separated format
-            if '|' in content:
-                lines = content.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if '|' in line:
-                        parts = line.split('|')
-                        if len(parts) >= 2:
-                            email = parts[0].strip()
-                            authkey = parts[1].strip()
-                            if email and authkey:
-                                if CanvaAccountDB.add_account(email, authkey):
-                                    count += 1
-            else:
-                # Block format: emails first, then blank line, then authkeys
-                # Split by double newline or find the blank line
-                parts = content.split('\n\n')
+        lines = content.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if '|' in line:
+                parts = line.split('|')
                 if len(parts) >= 2:
-                    emails_block = parts[0].strip()
-                    authkeys_block = parts[1].strip()
-                    
-                    emails = [e.strip() for e in emails_block.split('\n') if e.strip()]
-                    authkeys = [a.strip() for a in authkeys_block.split('\n') if a.strip()]
-                    
-                    # Pair emails with authkeys
-                    for i in range(min(len(emails), len(authkeys))):
-                        email = emails[i]
-                        authkey = authkeys[i]
-                        if email and authkey and '@' in email:
-                            if CanvaAccountDB.add_account(email, authkey):
-                                count += 1
-                else:
-                    # Try single blank line split
-                    lines = content.split('\n')
-                    # Find the blank line index
-                    blank_idx = -1
-                    for i, line in enumerate(lines):
-                        if not line.strip():
-                            blank_idx = i
-                            break
-                    
-                    if blank_idx > 0:
-                        emails = [l.strip() for l in lines[:blank_idx] if l.strip()]
-                        authkeys = [l.strip() for l in lines[blank_idx+1:] if l.strip()]
-                        
-                        for i in range(min(len(emails), len(authkeys))):
-                            email = emails[i]
-                            authkey = authkeys[i]
-                            if email and authkey and '@' in email:
-                                if CanvaAccountDB.add_account(email, authkey):
-                                    count += 1
-            
-            return count
-        except Exception as e:
-            logger.error(f"Error importing accounts: {e}")
-            return count
+                    email = parts[0].strip()
+                    authkey = parts[1].strip()
+                    if email and authkey:
+                        if CanvaAccountDB.add_account(email, authkey):
+                            count += 1
+            elif '@' in line:
+                # Just email, no authkey
+                email = line.strip()
+                if email:
+                    if CanvaAccountDB.add_account(email, 'no_authkey'):
+                        count += 1
+        return count
+
+
+# ============== PROMOTION OPERATIONS ==============
+
+class PromotionDB:
+    """Promotion management"""
+    
+    @staticmethod
+    def get_promotion_info():
+        """Get buy1get1 promotion info"""
+        try:
+            result = supabase.table('promotions').select('*').eq('promo_name', 'buy1get1').execute()
+            if result.data:
+                r = result.data[0]
+                return {
+                    'is_active': r['is_active'],
+                    'sold_count': r['sold_count'],
+                    'max_count': r['max_count'],
+                    'started_at': r['started_at']
+                }
+            return None
+        except:
+            return None
+    
+    @staticmethod
+    def activate_promotion(max_count=10):
+        """Activate promotion"""
+        try:
+            supabase.table('promotions').upsert({
+                'promo_name': 'buy1get1',
+                'is_active': 1,
+                'sold_count': 0,
+                'max_count': max_count,
+                'started_at': datetime.now().isoformat()
+            }, on_conflict='promo_name').execute()
+            return True
+        except:
+            return False
+    
+    @staticmethod
+    def deactivate_promotion():
+        """Deactivate promotion"""
+        try:
+            supabase.table('promotions').update({
+                'is_active': 0
+            }).eq('promo_name', 'buy1get1').execute()
+            return True
+        except:
+            return False
+    
+    @staticmethod
+    def increment_sold_count():
+        """Increment sold count"""
+        try:
+            # Get current count
+            result = supabase.table('promotions').select('sold_count').eq('promo_name', 'buy1get1').execute()
+            if result.data:
+                current = result.data[0]['sold_count']
+                supabase.table('promotions').update({
+                    'sold_count': current + 1
+                }).eq('promo_name', 'buy1get1').execute()
+            return True
+        except:
+            return False
+    
+    @staticmethod
+    def is_promotion_active():
+        """Check if promotion is active and not exceeded"""
+        try:
+            info = PromotionDB.get_promotion_info()
+            if info and info['is_active'] == 1:
+                return info['sold_count'] < info['max_count']
+            return False
+        except:
+            return False
+
+
+# ============== BACKWARD COMPATIBILITY ==============
+
+# These are used by old code
+class CreateTables:
+    @staticmethod
+    def create_all_tables():
+        logger.info("Tables should be created in Supabase Dashboard. Run get_table_creation_sql() to get SQL.")
+        return True
+
+# Dummy functions for compatibility
+def get_db_connection():
+    """Not needed with Supabase REST API"""
+    return None
+
+def execute_with_new_connection(query, params=None, fetch='none'):
+    """Not supported - use Supabase classes instead"""
+    logger.warning("execute_with_new_connection not supported with Supabase REST API")
+    return None
+
+def get_placeholder():
+    return "%s"
+
+
+# Print table creation SQL on import (for reference)
+if __name__ == "__main__":
+    print(get_table_creation_sql())
