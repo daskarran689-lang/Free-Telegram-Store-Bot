@@ -3206,11 +3206,13 @@ def MyOrdersList(message):
         notify_admin("📋 Xem đơn hàng", display_name)
     
     my_orders = GetDataFromDB.GetOrderIDs_Buyer(id)
-    if my_orders == [] or my_orders == "None":
+    if my_orders is None or my_orders == [] or my_orders == "None":
         bot.send_message(id, get_text("no_order_completed", lang), reply_markup=create_main_keyboard(lang, id), parse_mode='Markdown')
     else:
         for my_order in my_orders:
             order_details = GetDataFromDB.GetOrderDetails(my_order[0])
+            if order_details is None:
+                continue
             for buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber in order_details:
                 # Determine payment status
                 if paidmethod == "PENDING":
