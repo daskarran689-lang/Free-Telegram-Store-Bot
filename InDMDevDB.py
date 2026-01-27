@@ -9,6 +9,7 @@ Database module using Supabase REST API
 import os
 import logging
 from datetime import datetime
+import requests
 from dotenv import load_dotenv
 
 load_dotenv('config.env')
@@ -24,12 +25,132 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
 # Check if Supabase is configured
 USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
 
+
+class SupabaseResponse:
+    def __init__(self, data=None, count=None, error=None, status_code=None):
+        self.data = data if data is not None else []
+        self.count = count
+        self.error = error
+        self.status_code = status_code
+
+
+class SupabaseRESTTable:
+    def __init__(self, client, table_name):
+        self.client = client
+        self.table_name = table_name
+        self.method = "GET"
+        self.params = {}
+        self.headers = {}
+        self.payload = None
+        self._count = None
+
+    def select(self, columns="*", count=None):
+        self.method = "GET"
+        self.params["select"] = columns
+        self._count = count
+        return self
+
+    def insert(self, data):
+        self.method = "POST"
+        self.payload = data
+        self.headers["Prefer"] = "return=representation"
+        return self
+
+    def upsert(self, data, on_conflict=None):
+        self.method = "POST"
+        self.payload = data
+        self.headers["Prefer"] = "return=representation,resolution=merge-duplicates"
+        if on_conflict:
+            self.params["on_conflict"] = on_conflict
+        return self
+
+    def update(self, data):
+        self.method = "PATCH"
+        self.payload = data
+        self.headers["Prefer"] = "return=representation"
+        return self
+
+    def delete(self):
+        self.method = "DELETE"
+        self.headers["Prefer"] = "return=representation"
+        return self
+
+    def eq(self, column, value):
+        self.params[column] = f"eq.{value}"
+        return self
+
+    def limit(self, count):
+        self.params["limit"] = str(count)
+        return self
+
+    def execute(self):
+        url = f"{self.client.base_url}/rest/v1/{self.table_name}"
+        headers = dict(self.client.headers)
+        headers.update(self.headers)
+
+        if self._count:
+            prefer = headers.get("Prefer", "")
+            if "count=exact" not in prefer:
+                prefer = f"{prefer},count=exact".strip(",")
+            headers["Prefer"] = prefer
+
+        response = requests.request(
+            self.method,
+            url,
+            headers=headers,
+            params=self.params if self.params else None,
+            json=self.payload,
+            timeout=self.client.timeout
+        )
+
+        count = None
+        if self._count:
+            content_range = response.headers.get("Content-Range")
+            if content_range and "/" in content_range:
+                try:
+                    count = int(content_range.split("/")[-1])
+                except Exception:
+                    count = None
+
+        if response.status_code >= 400:
+            try:
+                error = response.json()
+            except Exception:
+                error = response.text
+            logger.error(f"Supabase REST error: {response.status_code} {error}")
+            return SupabaseResponse(data=[], count=count, error=error, status_code=response.status_code)
+
+        try:
+            data = response.json()
+        except Exception:
+            data = []
+
+        if isinstance(data, dict):
+            data = [data]
+        if data is None:
+            data = []
+
+        return SupabaseResponse(data=data, count=count, error=None, status_code=response.status_code)
+
+
+class SupabaseRESTClient:
+    def __init__(self, base_url, api_key, timeout=15):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout = timeout
+        self.headers = {
+            "apikey": api_key,
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def table(self, table_name):
+        return SupabaseRESTTable(self, table_name)
+
+
 if USE_SUPABASE:
-    from supabase import create_client, Client
-    
-    # Create Supabase client - this is instant, no connection waiting
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    logger.info("Using Supabase REST API (instant, no connection timeout)")
+    supabase = SupabaseRESTClient(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Using Supabase REST API (requests-based, no dependency backtracking)")
 else:
     supabase = None
     logger.warning("Supabase not configured! Set SUPABASE_URL and SUPABASE_KEY")
