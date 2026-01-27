@@ -560,14 +560,16 @@ def _init_tables_background():
             logger.warning(f"Background table init attempt {i+1} failed: {e}")
         time.sleep(5 * (i + 1))  # 5s, 10s, 15s, 20s, 25s
 
-# Try immediate initialization, fallback to background
-try:
-    CreateTables.create_all_tables()
-except Exception as e:
-    logger.warning(f"Initial table creation failed, will retry in background: {e}")
-    # Start background retry thread
+# IMPORTANT: Always initialize in background to not block Flask startup on Render
+# Render requires port to be open within 60 seconds
+def start_background_db_init():
+    """Start database initialization in background - non-blocking"""
     init_thread = threading.Thread(target=_init_tables_background, daemon=True)
     init_thread.start()
+    logger.info("Database initialization started in background")
+
+# Start background init immediately - don't block!
+start_background_db_init()
 
 # Helper function to get placeholder for SQL queries
 def get_placeholder():

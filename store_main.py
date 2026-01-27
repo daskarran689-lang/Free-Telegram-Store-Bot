@@ -82,30 +82,37 @@ if not webhook_url or not bot_token:
 # PERFORMANCE: Enable threaded mode for concurrent request handling
 bot = telebot.TeleBot(bot_token, threaded=True, num_threads=4)
 
-# Set up webhook (Render-safe: use /webhook path)
-try:
-    bot.remove_webhook()
+# IMPORTANT: Setup webhook in background to not block Flask startup
+# Render requires port to be open within 60 seconds
+def setup_webhook_background():
+    """Setup webhook and bot commands in background"""
+    try:
+        bot.remove_webhook()
+        
+        base_url = (webhook_url or "").rstrip("/")
+        public_webhook = f"{base_url}/webhook"
+        
+        bot.set_webhook(url=public_webhook)
+        logger.info(f"Webhook set successfully to {public_webhook}")
+        
+        # Set bot commands menu
+        commands = [
+            types.BotCommand("start", "Khởi động bot"),
+            types.BotCommand("menu", "Về trang chủ"),
+            types.BotCommand("buy", "Mua hàng"),
+            types.BotCommand("orders", "Xem đơn hàng"),
+            types.BotCommand("support", "Hỗ trợ"),
+            types.BotCommand("help", "Xem hướng dẫn")
+        ]
+        bot.set_my_commands(commands)
+        logger.info("Bot commands menu set successfully")
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {e}")
 
-    base_url = (webhook_url or "").rstrip("/")
-    public_webhook = f"{base_url}/webhook"
-
-    bot.set_webhook(url=public_webhook)
-    logger.info(f"Webhook set successfully to {public_webhook}")
-    
-    # Set bot commands menu
-    commands = [
-        types.BotCommand("start", "Khởi động bot"),
-        types.BotCommand("menu", "Về trang chủ"),
-        types.BotCommand("buy", "Mua hàng"),
-        types.BotCommand("orders", "Xem đơn hàng"),
-        types.BotCommand("support", "Hỗ trợ"),
-        types.BotCommand("help", "Xem hướng dẫn")
-    ]
-    bot.set_my_commands(commands)
-    logger.info("Bot commands menu set successfully")
-except Exception as e:
-    logger.error(f"Failed to set webhook: {e}")
-    exit(1)
+# Start webhook setup in background thread
+webhook_thread = threading.Thread(target=setup_webhook_background, daemon=True)
+webhook_thread.start()
+logger.info("Webhook setup started in background")
 
 # Helper function to check if user is admin (CACHED for performance)
 def is_admin(user_id):
@@ -137,21 +144,29 @@ def notify_admin(action, display_name, user_id=None, extra=""):
             msg += f" - {extra}"
         notify_admin_async(bot, default_admin_id, msg)
 
-# Add default admin from env if set
-if default_admin_id:
-    try:
-        existing_admins = GetDataFromDB.GetAdminIDsInDB() or []
-        admin_ids = [str(admin[0]) for admin in existing_admins]
-        if str(default_admin_id) not in admin_ids:
-            CreateDatas.AddAdmin(int(default_admin_id), "env_admin")
-            logger.info(f"Default admin {default_admin_id} added from environment variable")
-        else:
-            logger.info(f"Admin {default_admin_id} already exists")
-    except Exception as e:
-        logger.error(f"Error adding default admin: {e}")
+# Add default admin from env in background (non-blocking)
+def add_default_admin_background():
+    """Add default admin in background thread"""
+    if default_admin_id:
+        try:
+            # Wait a bit for DB to be ready
+            time.sleep(5)
+            existing_admins = GetDataFromDB.GetAdminIDsInDB() or []
+            admin_ids = [str(admin[0]) for admin in existing_admins]
+            if str(default_admin_id) not in admin_ids:
+                CreateDatas.AddAdmin(int(default_admin_id), "env_admin")
+                logger.info(f"Default admin {default_admin_id} added from environment variable")
+            else:
+                logger.info(f"Admin {default_admin_id} already exists")
+        except Exception as e:
+            logger.error(f"Error adding default admin: {e}")
+
+# Start in background
+admin_thread = threading.Thread(target=add_default_admin_background, daemon=True)
+admin_thread.start()
 
 # Process webhook calls
-logger.info("Shop Started!")
+logger.info("Shop Starting... Flask will be ready shortly")
 
 @flask_app.route("/", methods=["GET", "HEAD"])
 def health():
