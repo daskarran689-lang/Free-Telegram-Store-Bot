@@ -46,16 +46,16 @@ def start_background_db_init():
 
 
 # ============== TABLE NAMES (using existing tables) ==============
-# These match your existing Supabase tables
+# These match your existing Supabase tables (lowercase)
 
-TABLE_USERS = "ShopUserTable"
-TABLE_ADMINS = "ShopAdminTable"
-TABLE_PRODUCTS = "ShopProductTable"
-TABLE_ORDERS = "ShopOrderTable"
-TABLE_CATEGORIES = "ShopCategoryTable"
-TABLE_PAYMENT = "PaymentMethodTable"
-TABLE_CANVA = "CanvaAccountTable"
-TABLE_PROMO = "PromotionTable"
+TABLE_USERS = "shopusertable"
+TABLE_ADMINS = "shopadmintable"
+TABLE_PRODUCTS = "shopproducttable"
+TABLE_ORDERS = "shopordertable"
+TABLE_CATEGORIES = "shopcategorytable"
+TABLE_PAYMENT = "paymentmethodtable"
+TABLE_CANVA = "canvaaccounttable"
+TABLE_PROMO = "promotiontable"
 
 
 # ============== USER OPERATIONS ==============
