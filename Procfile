@@ -1,1 +1,1 @@
-web: python store_main.py
+web: python app.py
