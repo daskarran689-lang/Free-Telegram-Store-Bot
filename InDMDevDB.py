@@ -3,6 +3,7 @@ from datetime import datetime
 import threading
 import logging
 import os
+import time
 from contextlib import contextmanager
 
 # Configure logging
@@ -32,30 +33,88 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     USE_POSTGRES = True
     logger.info(f"Using PostgreSQL database (Supabase: {IS_SUPABASE})")
     
-    # Connection pool - reuse connections for better performance
+    # ============== SUPABASE CONNECTION SETTINGS ==============
+    # Supabase free tier has cold starts, need longer timeouts
+    _INITIAL_TIMEOUT = 30  # First connection timeout (cold start)
+    _NORMAL_TIMEOUT = 15   # Normal operation timeout
+    _MAX_RETRIES = 5       # Max retry attempts
+    _RETRY_BASE_DELAY = 2  # Base delay for exponential backoff (seconds)
+    _MAX_POOL_SIZE = 3     # Smaller pool for Supabase free tier
+    _KEEPALIVE_INTERVAL = 30  # Keepalive ping interval
+    
+    # Connection pool
     _connection_pool = []
     _pool_lock = threading.Lock()
-    _MAX_POOL_SIZE = 5
+    _db_initialized = False
     _last_successful_conn = None
+    _tables_created = False
     
-    def _create_connection(timeout=10):
-        """Create a single database connection"""
-        return psycopg.connect(
-            DATABASE_URL, 
-            connect_timeout=timeout,
-            autocommit=True
+    def _create_connection(timeout=_INITIAL_TIMEOUT):
+        """Create a single database connection with Supabase optimizations"""
+        # Build connection options for Supabase
+        conn_options = f"connect_timeout={timeout}"
+        
+        # Add keepalive settings for long-running connections
+        if IS_SUPABASE:
+            conn_options += " keepalives=1 keepalives_idle=30 keepalives_interval=10 keepalives_count=5"
+        
+        conn = psycopg.connect(
+            DATABASE_URL,
+            autocommit=True,
+            options=f"-c statement_timeout=30000"  # 30s query timeout
         )
+        return conn
+    
+    def _get_connection_with_retry(max_retries=_MAX_RETRIES, initial_timeout=_INITIAL_TIMEOUT):
+        """Get connection with exponential backoff retry"""
+        global _last_successful_conn
+        
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Use longer timeout for first attempts, shorter after success
+                if _last_successful_conn:
+                    timeout = _NORMAL_TIMEOUT
+                else:
+                    # Increase timeout with each retry
+                    timeout = initial_timeout + (attempt * 5)
+                
+                logger.info(f"DB connection attempt {attempt + 1}/{max_retries} (timeout={timeout}s)")
+                
+                conn = _create_connection(timeout=timeout)
+                
+                # Quick health check
+                conn.execute("SELECT 1")
+                
+                _last_successful_conn = time.time()
+                logger.info(f"Database connected successfully on attempt {attempt + 1}")
+                return conn
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+                
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 2s, 4s, 8s, 16s...
+                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    delay = min(delay, 30)  # Cap at 30 seconds
+                    logger.info(f"Retrying in {delay}s...")
+                    time.sleep(delay)
+        
+        logger.error(f"All {max_retries} connection attempts failed")
+        raise last_error
     
     def _get_pooled_connection():
-        """Get connection from pool or create new one"""
+        """Get connection from pool or create new one with retry"""
         global _last_successful_conn
         
         with _pool_lock:
-            # Try to get from pool first
+            # Try to get healthy connection from pool first
             while _connection_pool:
                 conn = _connection_pool.pop()
                 try:
-                    # Quick health check
+                    # Quick health check with short timeout
                     conn.execute("SELECT 1")
                     return conn
                 except:
@@ -64,17 +123,8 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
                     except:
                         pass
         
-        # Create new connection with smart timeout
-        # If we had a successful connection recently, use shorter timeout
-        timeout = 5 if _last_successful_conn else 15
-        
-        try:
-            conn = _create_connection(timeout=timeout)
-            _last_successful_conn = True
-            return conn
-        except Exception as e:
-            _last_successful_conn = False
-            raise
+        # No pooled connection available, create new one with retry
+        return _get_connection_with_retry()
     
     def _return_to_pool(conn):
         """Return connection to pool for reuse"""
@@ -91,7 +141,7 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     
     @contextmanager
     def get_db_connection():
-        """Context manager for PostgreSQL - uses connection pool"""
+        """Context manager for PostgreSQL - uses connection pool with retry"""
         conn = None
         try:
             conn = _get_pooled_connection()
@@ -124,15 +174,47 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     cursor = None
     
     def init_db_connection():
-        global db_connection, cursor
-        if db_connection is None:
+        """Initialize database connection with retry logic"""
+        global db_connection, cursor, _db_initialized
+        
+        if _db_initialized and db_connection is not None:
+            # Check if existing connection is still alive
             try:
-                db_connection = get_connection()
-                cursor = db_connection.cursor()
-            except Exception as e:
-                logger.warning(f"Initial connection failed: {e}")
+                cursor.execute("SELECT 1")
+                return True
+            except:
                 db_connection = None
                 cursor = None
+        
+        try:
+            logger.info("Initializing database connection...")
+            db_connection = _get_connection_with_retry()
+            cursor = db_connection.cursor()
+            _db_initialized = True
+            logger.info("Database connection initialized successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection: {e}")
+            db_connection = None
+            cursor = None
+            _db_initialized = False
+            return False
+    
+    def ensure_db_connection():
+        """Ensure database is connected, retry if needed"""
+        global db_connection, cursor
+        
+        if db_connection is None:
+            return init_db_connection()
+        
+        try:
+            cursor.execute("SELECT 1")
+            return True
+        except:
+            logger.warning("Database connection lost, reconnecting...")
+            db_connection = None
+            cursor = None
+            return init_db_connection()
 else:
     # Use SQLite (local development)
     USE_POSTGRES = False
@@ -176,8 +258,46 @@ class DBCursor:
 # Replace connected with wrapper
 connected = DBCursor(cursor)
 
-def execute_with_new_connection(query, params=None, fetch='none'):
-    """Execute query with a fresh connection (prevents connection stuck)"""
+def execute_with_new_connection(query, params=None, fetch='none', max_retries=3):
+    """Execute query with a fresh connection and retry logic"""
+    if USE_POSTGRES:
+        query = query.replace("?", "%s")
+    
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                if params:
+                    cur.execute(query, params)
+                else:
+                    cur.execute(query)
+                
+                if fetch == 'one':
+                    return cur.fetchone()
+                elif fetch == 'all':
+                    return cur.fetchall()
+                return None
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Query attempt {attempt + 1}/{max_retries} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1 * (attempt + 1))  # 1s, 2s, 3s delay
+    
+    logger.error(f"Query failed after {max_retries} attempts: {last_error}")
+    raise last_error
+
+def execute_with_new_connection_safe(query, params=None, fetch='none', default=None):
+    """Execute query safely - returns default on error instead of raising"""
+    try:
+        return execute_with_new_connection(query, params, fetch)
+    except Exception as e:
+        logger.error(f"Safe query failed: {e}")
+        return default
+
+# Old function for backward compatibility - redirect to new one
+def _execute_with_new_connection_legacy(query, params=None, fetch='none'):
+    """Legacy wrapper"""
     if USE_POSTGRES:
         query = query.replace("?", "%s")
     
@@ -198,226 +318,256 @@ class CreateTables:
     """Database table creation and management"""
     
     @staticmethod
-    def create_all_tables():
-        """Create all necessary database tables"""
-        global db_connection, cursor
+    def create_all_tables(max_retries=3):
+        """Create all necessary database tables with retry logic"""
+        global db_connection, cursor, _tables_created
         
-        # Reconnect for PostgreSQL
-        if USE_POSTGRES:
-            db_connection = get_connection()
-            cursor = db_connection.cursor()
+        if USE_POSTGRES and _tables_created:
+            logger.info("Tables already created, skipping...")
+            return True
         
-        # Use SERIAL for PostgreSQL, INTEGER PRIMARY KEY AUTOINCREMENT for SQLite
-        auto_increment = "SERIAL" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        last_error = None
         
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Creating tables attempt {attempt + 1}/{max_retries}...")
+                
+                # Get fresh connection for PostgreSQL
+                if USE_POSTGRES:
+                    db_connection = _get_connection_with_retry()
+                    cursor = db_connection.cursor()
+                
+                with db_lock:
+                    # Create ShopUserTable
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
+                            id SERIAL PRIMARY KEY,
+                            user_id BIGINT UNIQUE NOT NULL,
+                            username TEXT,
+                            wallet INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER UNIQUE NOT NULL,
+                            username TEXT,
+                            wallet INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    
+                    # Create ShopAdminTable
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
+                            id SERIAL PRIMARY KEY,
+                            admin_id BIGINT UNIQUE NOT NULL,
+                            username TEXT,
+                            wallet INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            admin_id INTEGER UNIQUE NOT NULL,
+                            username TEXT,
+                            wallet INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+
+                    # Create ShopProductTable
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
+                            id SERIAL PRIMARY KEY,
+                            productnumber BIGINT UNIQUE NOT NULL,
+                            admin_id BIGINT NOT NULL,
+                            username TEXT,
+                            productname TEXT NOT NULL,
+                            productdescription TEXT,
+                            productprice INTEGER DEFAULT 0,
+                            productimagelink TEXT,
+                            productdownloadlink TEXT,
+                            productkeysfile TEXT,
+                            productquantity INTEGER DEFAULT 0,
+                            productcategory TEXT DEFAULT 'Default Category',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            productnumber INTEGER UNIQUE NOT NULL,
+                            admin_id INTEGER NOT NULL,
+                            username TEXT,
+                            productname TEXT NOT NULL,
+                            productdescription TEXT,
+                            productprice INTEGER DEFAULT 0,
+                            productimagelink TEXT,
+                            productdownloadlink TEXT,
+                            productkeysfile TEXT,
+                            productquantity INTEGER DEFAULT 0,
+                            productcategory TEXT DEFAULT 'Default Category',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (admin_id) REFERENCES ShopAdminTable(admin_id)
+                        )""")
+
+                    # Create ShopOrderTable
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
+                            id SERIAL PRIMARY KEY,
+                            buyerid BIGINT NOT NULL,
+                            buyerusername TEXT,
+                            productname TEXT NOT NULL,
+                            productprice TEXT NOT NULL,
+                            orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            paidmethod TEXT DEFAULT 'NO',
+                            productdownloadlink TEXT,
+                            productkeys TEXT,
+                            buyercomment TEXT,
+                            ordernumber BIGINT UNIQUE NOT NULL,
+                            productnumber BIGINT NOT NULL,
+                            payment_id TEXT
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            buyerid INTEGER NOT NULL,
+                            buyerusername TEXT,
+                            productname TEXT NOT NULL,
+                            productprice TEXT NOT NULL,
+                            orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            paidmethod TEXT DEFAULT 'NO',
+                            productdownloadlink TEXT,
+                            productkeys TEXT,
+                            buyercomment TEXT,
+                            ordernumber INTEGER UNIQUE NOT NULL,
+                            productnumber INTEGER NOT NULL,
+                            payment_id TEXT,
+                            FOREIGN KEY (buyerid) REFERENCES ShopUserTable(user_id),
+                            FOREIGN KEY (productnumber) REFERENCES ShopProductTable(productnumber)
+                        )""")
+                    
+                    # Create ShopCategoryTable
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
+                            id SERIAL PRIMARY KEY,
+                            categorynumber BIGINT UNIQUE NOT NULL,
+                            categoryname TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            categorynumber INTEGER UNIQUE NOT NULL,
+                            categoryname TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    
+                    # Create PaymentMethodTable
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
+                            id SERIAL PRIMARY KEY,
+                            admin_id BIGINT,
+                            username TEXT,
+                            method_name TEXT UNIQUE NOT NULL,
+                            token_keys_clientid TEXT,
+                            secret_keys TEXT,
+                            activated TEXT DEFAULT 'NO',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            admin_id INTEGER,
+                            username TEXT,
+                            method_name TEXT UNIQUE NOT NULL,
+                            token_keys_clientid TEXT,
+                            secret_keys TEXT,
+                            activated TEXT DEFAULT 'NO',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    
+                    # Create CanvaAccountTable for storing Canva accounts with authkey
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
+                            id SERIAL PRIMARY KEY,
+                            email TEXT UNIQUE NOT NULL,
+                            authkey TEXT NOT NULL,
+                            buyer_id BIGINT DEFAULT NULL,
+                            order_number BIGINT DEFAULT NULL,
+                            status TEXT DEFAULT 'available',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            email TEXT UNIQUE NOT NULL,
+                            authkey TEXT NOT NULL,
+                            buyer_id INTEGER DEFAULT NULL,
+                            order_number INTEGER DEFAULT NULL,
+                            status TEXT DEFAULT 'available',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    
+                    # Create PromotionTable for Buy 1 Get 1 promotion
+                    if USE_POSTGRES:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
+                            id SERIAL PRIMARY KEY,
+                            promo_name TEXT UNIQUE NOT NULL,
+                            is_active INTEGER DEFAULT 0,
+                            sold_count INTEGER DEFAULT 0,
+                            max_count INTEGER DEFAULT 10,
+                            started_at TIMESTAMP DEFAULT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    else:
+                        cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            promo_name TEXT UNIQUE NOT NULL,
+                            is_active INTEGER DEFAULT 0,
+                            sold_count INTEGER DEFAULT 0,
+                            max_count INTEGER DEFAULT 10,
+                            started_at TIMESTAMP DEFAULT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )""")
+                    
+                    if not USE_POSTGRES:
+                        db_connection.commit()
+                    
+                    if USE_POSTGRES:
+                        _tables_created = True
+                    
+                    logger.info("All database tables created successfully")
+                    return True
+                    
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Table creation attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    delay = 2 * (attempt + 1)
+                    logger.info(f"Retrying table creation in {delay}s...")
+                    time.sleep(delay)
+        
+        logger.error(f"Table creation failed after {max_retries} attempts: {last_error}")
+        return False
+
+# Initialize tables with background retry
+def _init_tables_background():
+    """Initialize tables in background thread"""
+    for i in range(5):  # Try 5 times with increasing delay
         try:
-            with db_lock:
-                # Create ShopUserTable
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT UNIQUE NOT NULL,
-                        username TEXT,
-                        wallet INTEGER DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopUserTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER UNIQUE NOT NULL,
-                        username TEXT,
-                        wallet INTEGER DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                
-                # Create ShopAdminTable
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
-                        id SERIAL PRIMARY KEY,
-                        admin_id BIGINT UNIQUE NOT NULL,
-                        username TEXT,
-                        wallet INTEGER DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopAdminTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        admin_id INTEGER UNIQUE NOT NULL,
-                        username TEXT,
-                        wallet INTEGER DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-
-                # Create ShopProductTable
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
-                        id SERIAL PRIMARY KEY,
-                        productnumber BIGINT UNIQUE NOT NULL,
-                        admin_id BIGINT NOT NULL,
-                        username TEXT,
-                        productname TEXT NOT NULL,
-                        productdescription TEXT,
-                        productprice INTEGER DEFAULT 0,
-                        productimagelink TEXT,
-                        productdownloadlink TEXT,
-                        productkeysfile TEXT,
-                        productquantity INTEGER DEFAULT 0,
-                        productcategory TEXT DEFAULT 'Default Category',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopProductTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        productnumber INTEGER UNIQUE NOT NULL,
-                        admin_id INTEGER NOT NULL,
-                        username TEXT,
-                        productname TEXT NOT NULL,
-                        productdescription TEXT,
-                        productprice INTEGER DEFAULT 0,
-                        productimagelink TEXT,
-                        productdownloadlink TEXT,
-                        productkeysfile TEXT,
-                        productquantity INTEGER DEFAULT 0,
-                        productcategory TEXT DEFAULT 'Default Category',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (admin_id) REFERENCES ShopAdminTable(admin_id)
-                    )""")
-
-                # Create ShopOrderTable
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
-                        id SERIAL PRIMARY KEY,
-                        buyerid BIGINT NOT NULL,
-                        buyerusername TEXT,
-                        productname TEXT NOT NULL,
-                        productprice TEXT NOT NULL,
-                        orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        paidmethod TEXT DEFAULT 'NO',
-                        productdownloadlink TEXT,
-                        productkeys TEXT,
-                        buyercomment TEXT,
-                        ordernumber BIGINT UNIQUE NOT NULL,
-                        productnumber BIGINT NOT NULL,
-                        payment_id TEXT
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopOrderTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        buyerid INTEGER NOT NULL,
-                        buyerusername TEXT,
-                        productname TEXT NOT NULL,
-                        productprice TEXT NOT NULL,
-                        orderdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        paidmethod TEXT DEFAULT 'NO',
-                        productdownloadlink TEXT,
-                        productkeys TEXT,
-                        buyercomment TEXT,
-                        ordernumber INTEGER UNIQUE NOT NULL,
-                        productnumber INTEGER NOT NULL,
-                        payment_id TEXT,
-                        FOREIGN KEY (buyerid) REFERENCES ShopUserTable(user_id),
-                        FOREIGN KEY (productnumber) REFERENCES ShopProductTable(productnumber)
-                    )""")
-                
-                # Create ShopCategoryTable
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
-                        id SERIAL PRIMARY KEY,
-                        categorynumber BIGINT UNIQUE NOT NULL,
-                        categoryname TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS ShopCategoryTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        categorynumber INTEGER UNIQUE NOT NULL,
-                        categoryname TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                
-                # Create PaymentMethodTable
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
-                        id SERIAL PRIMARY KEY,
-                        admin_id BIGINT,
-                        username TEXT,
-                        method_name TEXT UNIQUE NOT NULL,
-                        token_keys_clientid TEXT,
-                        secret_keys TEXT,
-                        activated TEXT DEFAULT 'NO',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS PaymentMethodTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        admin_id INTEGER,
-                        username TEXT,
-                        method_name TEXT UNIQUE NOT NULL,
-                        token_keys_clientid TEXT,
-                        secret_keys TEXT,
-                        activated TEXT DEFAULT 'NO',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                
-                # Create CanvaAccountTable for storing Canva accounts with authkey
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
-                        id SERIAL PRIMARY KEY,
-                        email TEXT UNIQUE NOT NULL,
-                        authkey TEXT NOT NULL,
-                        buyer_id BIGINT DEFAULT NULL,
-                        order_number BIGINT DEFAULT NULL,
-                        status TEXT DEFAULT 'available',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS CanvaAccountTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        email TEXT UNIQUE NOT NULL,
-                        authkey TEXT NOT NULL,
-                        buyer_id INTEGER DEFAULT NULL,
-                        order_number INTEGER DEFAULT NULL,
-                        status TEXT DEFAULT 'available',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                
-                # Create PromotionTable for Buy 1 Get 1 promotion
-                if USE_POSTGRES:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
-                        id SERIAL PRIMARY KEY,
-                        promo_name TEXT UNIQUE NOT NULL,
-                        is_active INTEGER DEFAULT 0,
-                        sold_count INTEGER DEFAULT 0,
-                        max_count INTEGER DEFAULT 10,
-                        started_at TIMESTAMP DEFAULT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                else:
-                    cursor.execute("""CREATE TABLE IF NOT EXISTS PromotionTable(
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        promo_name TEXT UNIQUE NOT NULL,
-                        is_active INTEGER DEFAULT 0,
-                        sold_count INTEGER DEFAULT 0,
-                        max_count INTEGER DEFAULT 10,
-                        started_at TIMESTAMP DEFAULT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )""")
-                
-                if not USE_POSTGRES:
-                    db_connection.commit()
-                logger.info("All database tables created successfully")
-                
+            if CreateTables.create_all_tables():
+                return
         except Exception as e:
-            logger.error(f"Error creating database tables: {e}")
-            if not USE_POSTGRES:
-                db_connection.rollback()
-            raise
-        
-# Initialize tables (non-blocking - will retry on first use)
+            logger.warning(f"Background table init attempt {i+1} failed: {e}")
+        time.sleep(5 * (i + 1))  # 5s, 10s, 15s, 20s, 25s
+
+# Try immediate initialization, fallback to background
 try:
     CreateTables.create_all_tables()
 except Exception as e:
-    logger.warning(f"Initial table creation failed (will retry later): {e}")
+    logger.warning(f"Initial table creation failed, will retry in background: {e}")
+    # Start background retry thread
+    init_thread = threading.Thread(target=_init_tables_background, daemon=True)
+    init_thread.start()
 
 # Helper function to get placeholder for SQL queries
 def get_placeholder():

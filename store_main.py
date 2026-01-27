@@ -14,6 +14,7 @@ import random
 import os
 import os.path
 import re
+import threading
 from InDMDevDB import *
 from purchase import *
 from InDMCategories import *
@@ -22,6 +23,15 @@ from telebot.types import LabeledPrice, PreCheckoutQuery, SuccessfulPayment, Shi
 import json
 from dotenv import load_dotenv
 from languages import get_text, get_user_lang, set_user_lang, LANGUAGES, get_button_text
+
+# Import performance optimizations
+from performance import (
+    is_admin_cached, check_rate_limit, background,
+    notify_admin_async, add_user_async, has_purchased_cached,
+    get_products_cached, get_promotion_cached, invalidate_user_purchase_cache,
+    invalidate_promotion_cache, warm_caches, get_all_cache_stats,
+    user_cache, admin_cache
+)
 
 # Load environment variables
 load_dotenv('config.env')
@@ -69,7 +79,8 @@ if not webhook_url or not bot_token:
     logger.error("Missing required environment variables: RENDER_EXTERNAL_URL/NGROK_HTTPS_URL or TELEGRAM_BOT_TOKEN")
     exit(1)
 
-bot = telebot.TeleBot(bot_token, threaded=False)
+# PERFORMANCE: Enable threaded mode for concurrent request handling
+bot = telebot.TeleBot(bot_token, threaded=True, num_threads=4)
 
 # Set up webhook (Render-safe: use /webhook path)
 try:
@@ -96,16 +107,10 @@ except Exception as e:
     logger.error(f"Failed to set webhook: {e}")
     exit(1)
 
-# Helper function to check if user is admin
+# Helper function to check if user is admin (CACHED for performance)
 def is_admin(user_id):
-    """Check if user_id is an admin"""
-    # Check env admin first
-    if default_admin_id and str(user_id) == str(default_admin_id):
-        return True
-    # Check database
-    admins = GetDataFromDB.GetAdminIDsInDB() or []
-    admin_ids = [str(admin[0]) for admin in admins]
-    return str(user_id) in admin_ids
+    """Check if user_id is an admin - uses cache for speed"""
+    return is_admin_cached(user_id, default_admin_id)
 
 # Hàm lấy display name cho user
 def get_user_display_name(message):
@@ -123,17 +128,14 @@ def get_user_display_name_from_data(username, user_id):
     else:
         return f"ID: {user_id}"
 
-# Hàm thông báo cho admin
+# Hàm thông báo cho admin (NON-BLOCKING)
 def notify_admin(action, display_name, user_id=None, extra=""):
-    """Gửi thông báo ngắn gọn cho admin"""
-    try:
-        if default_admin_id:
-            msg = f"📌 {display_name}: {action}"
-            if extra:
-                msg += f" - {extra}"
-            bot.send_message(int(default_admin_id), msg)
-    except Exception as e:
-        logger.error(f"Error notifying admin: {e}")
+    """Gửi thông báo ngắn gọn cho admin - chạy background không block"""
+    if default_admin_id:
+        msg = f"📌 {display_name}: {action}"
+        if extra:
+            msg += f" - {extra}"
+        notify_admin_async(bot, default_admin_id, msg)
 
 # Add default admin from env if set
 if default_admin_id:
@@ -160,14 +162,26 @@ def health():
 @flask_app.route("/", methods=["POST"])
 @flask_app.route("/webhook", methods=["POST"])
 def telegram_webhook():
-    """Handle incoming webhook requests from Telegram"""
+    """Handle incoming webhook requests from Telegram - OPTIMIZED for speed"""
     try:
         ctype = (request.headers.get("content-type") or "").lower()
 
         if ctype.startswith("application/json"):
             json_string = request.get_data(as_text=True)
-            update = telebot.types.Update.de_json(json_string)
-            bot.process_new_updates([update])
+            
+            # PERFORMANCE: Process update in background thread
+            # This allows webhook to respond immediately to Telegram
+            def process_update():
+                try:
+                    update = telebot.types.Update.de_json(json_string)
+                    bot.process_new_updates([update])
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+            
+            # Submit to background processor
+            background.submit(process_update)
+            
+            # Return immediately - don't wait for processing
             return "ok", 200
 
         logger.warning(f"Invalid content type in webhook request: {ctype}")
@@ -175,7 +189,7 @@ def telegram_webhook():
 
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
-        return "error", 500
+        return "ok", 200  # Always return 200 to prevent Telegram retries
 
 
 # PayOS helper functions
@@ -376,31 +390,20 @@ def get_payment_api_key():
 
 BASE_CURRENCY = store_currency
 
-
-# Cache for user purchase status (expires after 5 minutes)
-_user_purchase_cache = {}
-_cache_ttl = 300  # 5 minutes
+# PERFORMANCE: Warm caches on startup
+warm_caches()
 
 # Create main reply keyboard (buttons at bottom - always visible)
 def create_main_keyboard(lang="vi", user_id=None, skip_db_check=False):
-    """Create the main user keyboard. If user has purchased, show OTP button."""
+    """Create the main user keyboard. If user has purchased, show OTP button.
+    OPTIMIZED: Uses performance cache for fast lookup"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(types.KeyboardButton(text="🛒 Mua ngay"))
     
-    # Check if user has purchased (with caching)
+    # Check if user has purchased (FAST - using performance cache)
     has_purchased = False
     if user_id and not skip_db_check:
-        cache_key = str(user_id)
-        cached = _user_purchase_cache.get(cache_key)
-        if cached and (time.time() - cached['time']) < _cache_ttl:
-            has_purchased = cached['value']
-        else:
-            try:
-                accounts = CanvaAccountDB.get_buyer_accounts(user_id)
-                has_purchased = accounts and len(accounts) > 0
-                _user_purchase_cache[cache_key] = {'value': has_purchased, 'time': time.time()}
-            except:
-                pass
+        has_purchased = has_purchased_cached(user_id)
     
     if has_purchased:
         keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
