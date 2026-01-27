@@ -46,8 +46,13 @@ class SupabaseRESTTable:
 
     def select(self, columns="*", count=None):
         self.method = "GET"
-        self.params["select"] = columns
+        self.params["select"] = columns.replace(" ", "")
         self._count = count
+        return self
+
+    def order(self, column, ascending=True):
+        direction = "asc" if ascending else "desc"
+        self.params["order"] = f"{column}.{direction}"
         return self
 
     def insert(self, data):
@@ -371,6 +376,71 @@ class CreateDatas:
             logger.error(f"Error deleting product: {e}")
             return False
 
+    @staticmethod
+    def Update_All_ProductCategory(new_category, old_category):
+        """Update all products from old category to new category"""
+        try:
+            supabase.table(TABLE_PRODUCTS).update({'productcategory': new_category}).eq('productcategory', old_category).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating all product categories: {e}")
+            return False
+
+    @staticmethod
+    def Update_A_Category(new_category_name, category_number):
+        """Update category name by number"""
+        try:
+            supabase.table(TABLE_CATEGORIES).update({'categoryname': new_category_name}).eq('categorynumber', category_number).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating category: {e}")
+            return False
+
+    @staticmethod
+    def AddPaymentMethod(admin_id, username, method_name):
+        """Add payment method"""
+        try:
+            supabase.table(TABLE_PAYMENT).upsert({
+                'admin_id': admin_id,
+                'username': username,
+                'method_name': method_name,
+                'activated': 'YES'
+            }, on_conflict='method_name').execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error adding payment method: {e}")
+            return False
+
+    @staticmethod
+    def UpdatePaymentMethodToken(admin_id, username, token_data, method_name):
+        """Update payment method token data"""
+        try:
+            supabase.table(TABLE_PAYMENT).update({
+                'admin_id': admin_id,
+                'username': username,
+                'token_keys_clientid': token_data,
+                'activated': 'YES'
+            }).eq('method_name', method_name).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating payment token: {e}")
+            return False
+
+    @staticmethod
+    def UpdatePaymentMethodSecret(admin_id, username, secret_data, method_name):
+        """Update payment method secret data"""
+        try:
+            supabase.table(TABLE_PAYMENT).update({
+                'admin_id': admin_id,
+                'username': username,
+                'secret_keys': secret_data,
+                'activated': 'YES'
+            }).eq('method_name', method_name).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating payment secret: {e}")
+            return False
+
 
 # ============== GET DATA OPERATIONS ==============
 
@@ -557,6 +627,18 @@ class GetDataFromDB:
             return result.data if result.data else []
         except:
             return []
+
+    @staticmethod
+    def GetOrderInfo():
+        """Get order list for admin"""
+        try:
+            result = supabase.table(TABLE_ORDERS).select('ordernumber,productname,buyerusername,orderdate').order('ordernumber', ascending=False).execute()
+            if result.data:
+                return [(r['ordernumber'], r['productname'], r.get('buyerusername'), r['orderdate']) for r in result.data]
+            return []
+        except Exception as e:
+            logger.error(f"Error getting order info: {e}")
+            return []
     
     @staticmethod
     def GetPaymentMethodTokenKeysCleintID(method_name):
@@ -578,23 +660,81 @@ class GetDataFromDB:
     
     @staticmethod
     def AllUsers():
-        return GetDataFromDB.GetUsersInfo()
+        try:
+            result = supabase.table(TABLE_USERS).select('id', count='exact').execute()
+            return [(result.count or 0,)]
+        except Exception as e:
+            logger.error(f"Error counting users: {e}")
+            return [(0,)]
     
     @staticmethod
     def AllAdmins():
-        return GetDataFromDB.GetAdminIDsInDB()
+        try:
+            result = supabase.table(TABLE_ADMINS).select('id', count='exact').execute()
+            return [(result.count or 0,)]
+        except Exception as e:
+            logger.error(f"Error counting admins: {e}")
+            return [(0,)]
     
     @staticmethod
     def AllProducts():
-        return GetDataFromDB.GetProductInfo()
+        try:
+            result = supabase.table(TABLE_PRODUCTS).select('id', count='exact').execute()
+            return [(result.count or 0,)]
+        except Exception as e:
+            logger.error(f"Error counting products: {e}")
+            return [(0,)]
     
     @staticmethod
     def AllOrders():
         try:
-            result = supabase.table(TABLE_ORDERS).select('*').execute()
-            return result.data if result.data else []
-        except:
-            return []
+            result = supabase.table(TABLE_ORDERS).select('id', count='exact').execute()
+            return [(result.count or 0,)]
+        except Exception as e:
+            logger.error(f"Error counting orders: {e}")
+            return [(0,)]
+
+
+# ============== CLEAN DATA OPERATIONS ==============
+
+class CleanData:
+    """Cleanup operations"""
+
+    @staticmethod
+    def delete_a_product(productnumber):
+        try:
+            supabase.table(TABLE_PRODUCTS).delete().eq('productnumber', productnumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting product: {e}")
+            return False
+
+    @staticmethod
+    def delete_a_category(category_number):
+        try:
+            supabase.table(TABLE_CATEGORIES).delete().eq('categorynumber', category_number).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting category: {e}")
+            return False
+
+    @staticmethod
+    def delete_all_orders():
+        try:
+            supabase.table(TABLE_ORDERS).delete().execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting all orders: {e}")
+            return False
+
+    @staticmethod
+    def delete_an_order(ordernumber):
+        try:
+            supabase.table(TABLE_ORDERS).delete().eq('ordernumber', ordernumber).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting order: {e}")
+            return False
 
 
 # ============== CANVA ACCOUNT OPERATIONS ==============
