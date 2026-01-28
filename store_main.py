@@ -825,7 +825,6 @@ def send_welcome(message):
             key0 = types.KeyboardButton(text=get_text("manage_products", lang))
             key1 = types.KeyboardButton(text=get_text("manage_categories", lang))
             key2 = types.KeyboardButton(text=get_text("manage_orders", lang))
-            key3 = types.KeyboardButton(text=get_text("payment_methods", lang))
             key4 = types.KeyboardButton(text=get_text("news_to_users", lang))
             key5 = types.KeyboardButton(text=get_text("switch_to_user", lang))
             key6 = types.KeyboardButton(text="🎁 Quản lý khuyến mãi")
@@ -836,9 +835,8 @@ def send_welcome(message):
                 key7 = types.KeyboardButton(text="🔴 TẮT Bot (bảo trì)")
             keyboardadmin.add(key0)
             keyboardadmin.add(key1, key2)
-            keyboardadmin.add(key3, key4)
-            keyboardadmin.add(key5, key6)
-            keyboardadmin.add(key7)
+            keyboardadmin.add(key4, key5)
+            keyboardadmin.add(key6, key7)
 
             # Get promotion status
             promo_info = PromotionDB.get_promotion_info()
@@ -3856,12 +3854,10 @@ def message_all_users(message):
         try:
             key1 = types.KeyboardButton(text="Quản lý sản phẩm 💼")
             key2 = types.KeyboardButton(text="Quản lý đơn hàng 🛍")
-            key3 = types.KeyboardButton(text="Phương thức thanh toán 💳")
             key4 = types.KeyboardButton(text="Gửi thông báo 📣")
             key5 = types.KeyboardButton(text="Quản lý người dùng 👥")
             keyboardadmin.add(key1, key2)
-            keyboardadmin.add(key3, key4)
-            keyboardadmin.add(key5)
+            keyboardadmin.add(key4, key5)
             
             input_message = message.text
             
@@ -4067,122 +4063,6 @@ def delete_an_order(message):
         print(e)
         msg = bot.send_message(id, "❌ Lỗi, vui lòng thử lại!")
         bot.register_next_step_handler(msg, delete_an_order)
-
-# Check if message matches payment methods button
-def is_payment_methods_button(text):
-    keywords = ["Payment Methods", "Phương thức thanh toán", "payment methods", "phương thức thanh toán"]
-    return any(kw in text for kw in keywords)
-
-#Command handler and function to Manage Payment Methods
-@bot.message_handler(content_types=["text"], func=lambda message: is_payment_methods_button(message.text))
-def PaymentMethodMNG(message):
-    id = message.from_user.id
-    lang = get_user_lang(id)
-    admins = GetDataFromDB.GetAdminIDsInDB()
-    
-    if is_admin(id):
-        keyboardadmin = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
-        keyboardadmin.row_width = 2
-        key1 = types.KeyboardButton(text=get_text("setup_bank", lang))
-        key2 = types.KeyboardButton(text=get_text("pending_orders", lang))
-        key3 = types.KeyboardButton(text=get_text("home", lang))
-        keyboardadmin.add(key1, key2)
-        keyboardadmin.add(key3)
-        bot.send_message(id, get_text("choose_action", lang), reply_markup=keyboardadmin)
-    else:
-        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
-
-# Check if message matches setup bank button
-def is_setup_bank_button(text):
-    return text in [get_text("setup_bank", "en"), get_text("setup_bank", "vi"), "Setup Bank Account 🏦", "Cài đặt tài khoản 🏦"]
-
-# Command handler to setup bank account
-@bot.message_handler(content_types=["text"], func=lambda message: is_setup_bank_button(message.text))
-def SetupBankAccount(message):
-    id = message.from_user.id
-    lang = get_user_lang(id)
-    
-    if is_admin(id):
-        keyboard = create_cancel_keyboard()
-        msg = bot.send_message(id, get_text("reply_bank_code", lang), reply_markup=keyboard)
-        bot.register_next_step_handler(msg, setup_bank_code)
-    else:
-        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
-
-def setup_bank_code(message):
-    id = message.from_user.id
-    lang = get_user_lang(id)
-    username = message.from_user.username or "admin"
-    
-    # Check cancel
-    if is_cancel_action(message.text):
-        send_welcome(message)
-        return
-    
-    if is_admin(id):
-        global bank_setup_data
-        bank_setup_data = {"bank_code": message.text.upper().strip()}
-        keyboard = create_cancel_keyboard()
-        msg = bot.send_message(id, get_text("reply_account_number", lang), reply_markup=keyboard)
-        bot.register_next_step_handler(msg, setup_account_number)
-    else:
-        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
-
-def setup_account_number(message):
-    id = message.from_user.id
-    lang = get_user_lang(id)
-    
-    # Check cancel
-    if is_cancel_action(message.text):
-        send_welcome(message)
-        return
-    
-    if is_admin(id):
-        bank_setup_data["account_number"] = message.text.strip()
-        keyboard = create_cancel_keyboard()
-        msg = bot.send_message(id, get_text("reply_account_name", lang), reply_markup=keyboard)
-        bot.register_next_step_handler(msg, setup_account_name)
-    else:
-        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
-
-def setup_account_name(message):
-    id = message.from_user.id
-    lang = get_user_lang(id)
-    username = message.from_user.username or "admin"
-    
-    # Check cancel
-    if is_cancel_action(message.text):
-        send_welcome(message)
-        return
-    
-    if is_admin(id):
-        bank_setup_data["account_name"] = message.text.strip().upper()
-        
-        # Save to database
-        try:
-            # Check if BankTransfer method exists
-            existing = GetDataFromDB.GetPaymentMethodsAll("BankTransfer")
-            if not existing or "BankTransfer" not in str(existing):
-                CreateDatas.AddPaymentMethod(id, username, "BankTransfer")
-            
-            # Store bank_code|account_number in token field, account_name in secret field
-            token_data = f"{bank_setup_data['bank_code']}|{bank_setup_data['account_number']}"
-            CreateDatas.UpdatePaymentMethodToken(id, username, token_data, "BankTransfer")
-            CreateDatas.UpdatePaymentMethodSecret(id, username, bank_setup_data["account_name"], "BankTransfer")
-            
-            keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=False, resize_keyboard=True)
-            keyboard.add(types.KeyboardButton(text=get_text("home", lang)))
-            
-            bot.send_message(id, get_text("bank_setup_success", lang, 
-                bank_setup_data["bank_code"], 
-                bank_setup_data["account_number"], 
-                bank_setup_data["account_name"]
-            ), reply_markup=keyboard)
-        except Exception as e:
-            logger.error(f"Bank setup error: {e}")
-            bot.send_message(id, get_text("error_404", lang), reply_markup=create_main_keyboard(lang, id))
-    else:
-        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
 
 # Check if message matches pending orders button
 def is_pending_orders_button(text):
