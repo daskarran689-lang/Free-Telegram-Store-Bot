@@ -155,6 +155,25 @@ def get_user_display_name_from_data(username, user_id):
     else:
         return f"ID: {user_id}"
 
+# Helper: Check if user wants to cancel
+def is_cancel_action(text):
+    """Check if user wants to cancel the current action"""
+    cancel_keywords = ["❌ Hủy", "🏠 Trang chủ", "/start", "Hủy", "Cancel"]
+    return any(kw in text for kw in cancel_keywords) if text else False
+
+# Helper: Create keyboard with Cancel button
+def create_cancel_keyboard():
+    """Create a simple keyboard with Cancel button"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(types.KeyboardButton(text="❌ Hủy"))
+    return keyboard
+
+# Handler for Cancel button
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "❌ Hủy")
+def handle_cancel(message):
+    """Handle cancel action - return to home"""
+    send_welcome(message)
+
 # Hàm thông báo cho admin (NON-BLOCKING)
 def notify_admin(action, display_name, user_id=None, extra=""):
     """Gửi thông báo ngắn gọn cho admin - chạy background không block"""
@@ -1133,7 +1152,8 @@ def add_canva_account_prompt(message):
         return
     
     # With Premium, only need email (no authkey required)
-    msg = bot.send_message(id, "📧 Gửi danh sách email tài khoản Canva\n\n✅ Đã dùng Premium - không cần authkey!\n\nĐịnh dạng:\nemail1@domain.xyz\nemail2@domain.xyz\nemail3@domain.xyz\n\n(Mỗi email 1 dòng)")
+    keyboard = create_cancel_keyboard()
+    msg = bot.send_message(id, "📧 Gửi danh sách email tài khoản Canva\n\n✅ Đã dùng Premium - không cần authkey!\n\nĐịnh dạng:\nemail1@domain.xyz\nemail2@domain.xyz\nemail3@domain.xyz\n\n(Mỗi email 1 dòng)", reply_markup=keyboard)
     bot.register_next_step_handler(msg, process_canva_accounts_file)
 
 def process_canva_accounts_file(message):
@@ -1142,6 +1162,11 @@ def process_canva_accounts_file(message):
     lang = get_user_lang(id)
     
     if not is_admin(id):
+        return
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
         return
     
     if message.document:
@@ -1331,7 +1356,8 @@ def AddProductsMNG(message):
     admins = GetDataFromDB.GetAdminIDsInDB() or []
     
     if is_admin(id):
-        msg = bot.send_message(id, get_text("reply_product_name", lang))
+        keyboard = create_cancel_keyboard()
+        msg = bot.send_message(id, get_text("reply_product_name", lang), reply_markup=keyboard)
         new_product_number = random.randint(10000000,99999999)
         productnumber = f"{new_product_number}"
         CreateDatas.AddProduct(productnumber, id, usname)
@@ -1347,15 +1373,26 @@ def add_a_product_name(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB() or []
     
+    # Check cancel
+    if is_cancel_action(message.text):
+        # Delete incomplete product
+        try:
+            DeleteDatas.DeleteAProduct(productnumbers)
+        except:
+            pass
+        send_welcome(message)
+        return
+    
     if is_admin(id):
         try:
             productname = message.text
-            msg = bot.send_message(id, get_text("reply_product_desc", lang))
+            keyboard = create_cancel_keyboard()
+            msg = bot.send_message(id, get_text("reply_product_desc", lang), reply_markup=keyboard)
             CreateDatas.UpdateProductName(productname, productnumbers)
             bot.register_next_step_handler(msg, add_a_product_decription)
         except Exception as e:
             print(e)
-            msg = bot.send_message(id, get_text("error_404", lang))
+            msg = bot.send_message(id, get_text("error_404", lang), reply_markup=create_cancel_keyboard())
             bot.register_next_step_handler(msg, add_a_product_name)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1366,15 +1403,25 @@ def add_a_product_decription(message):
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB() or []
     
+    # Check cancel
+    if is_cancel_action(message.text):
+        try:
+            DeleteDatas.DeleteAProduct(productnumbers)
+        except:
+            pass
+        send_welcome(message)
+        return
+    
     if is_admin(id):
         try:
             description = message.text
-            msg = bot.send_message(id, get_text("reply_product_price", lang))
+            keyboard = create_cancel_keyboard()
+            msg = bot.send_message(id, get_text("reply_product_price", lang), reply_markup=keyboard)
             CreateDatas.UpdateProductDescription(description, productnumbers)
             bot.register_next_step_handler(msg, add_a_product_price)
         except Exception as e:
             print(e)
-            msg = bot.send_message(id, get_text("error_404", lang))
+            msg = bot.send_message(id, get_text("error_404", lang), reply_markup=create_cancel_keyboard())
             bot.register_next_step_handler(msg, add_a_product_decription)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1384,6 +1431,15 @@ def add_a_product_price(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     admins = GetDataFromDB.GetAdminIDsInDB() or []
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        try:
+            DeleteDatas.DeleteAProduct(productnumbers)
+        except:
+            pass
+        send_welcome(message)
+        return
     
     if is_admin(id):
         try:
@@ -1629,7 +1685,8 @@ def add_quantity_handler(message):
     lang = get_user_lang(id)
     
     if is_admin(id):
-        msg = bot.send_message(id, get_text("reply_quantity", lang))
+        keyboard = create_cancel_keyboard()
+        msg = bot.send_message(id, get_text("reply_quantity", lang), reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_add_quantity)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1637,6 +1694,11 @@ def add_quantity_handler(message):
 def process_add_quantity(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
     
     if not is_admin(id):
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1653,7 +1715,7 @@ def process_add_quantity(message):
         
         bot.send_message(id, get_text("quantity_added", lang, qty_to_add, new_qty), reply_markup=keyboard)
     except:
-        msg = bot.send_message(id, get_text("error_404", lang))
+        msg = bot.send_message(id, get_text("error_404", lang), reply_markup=create_cancel_keyboard())
         bot.register_next_step_handler(msg, process_add_quantity)
 
 # Check if message matches upload keys button
@@ -1666,7 +1728,8 @@ def upload_keys_handler(message):
     lang = get_user_lang(id)
     
     if is_admin(id):
-        msg = bot.send_message(id, get_text("attach_keys_file", lang))
+        keyboard = create_cancel_keyboard()
+        msg = bot.send_message(id, get_text("attach_keys_file", lang), reply_markup=keyboard)
         bot.register_next_step_handler(msg, process_upload_keys)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1674,6 +1737,11 @@ def upload_keys_handler(message):
 def process_upload_keys(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
     
     if not is_admin(id):
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1741,7 +1809,8 @@ def DeleteProductsMNG(message):
                 bot.send_message(id, get_text("product_id_name", lang))
                 for pid, tittle in productnumber_name:
                     bot.send_message(id, f"/{pid} - `{tittle}`", parse_mode="Markdown")
-                msg = bot.send_message(id, get_text("click_product_delete", lang), parse_mode="Markdown")
+                keyboard = create_cancel_keyboard()
+                msg = bot.send_message(id, get_text("click_product_delete", lang), reply_markup=keyboard, parse_mode="Markdown")
                 bot.register_next_step_handler(msg, delete_a_product)
         else:
             bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -1751,6 +1820,12 @@ def DeleteProductsMNG(message):
 def delete_a_product(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     productnu = message.text
     productnumber = productnu[1:99]
     productnum = GetDataFromDB.GetProductIDs()
@@ -1862,12 +1937,19 @@ def edit_product_name_prompt(message):
     id = message.from_user.id
     if not is_admin(id):
         return
-    msg = bot.send_message(id, "📝 Nhập tên mới cho sản phẩm:")
+    keyboard = create_cancel_keyboard()
+    msg = bot.send_message(id, "📝 Nhập tên mới cho sản phẩm:", reply_markup=keyboard)
     bot.register_next_step_handler(msg, save_product_name)
 
 def save_product_name(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     try:
         new_name = message.text.strip()
         CreateDatas.UpdateProductName(new_name, edit_product_id)
@@ -1882,12 +1964,19 @@ def edit_product_desc_prompt(message):
     id = message.from_user.id
     if not is_admin(id):
         return
-    msg = bot.send_message(id, "📄 Nhập mô tả mới cho sản phẩm:")
+    keyboard = create_cancel_keyboard()
+    msg = bot.send_message(id, "📄 Nhập mô tả mới cho sản phẩm:", reply_markup=keyboard)
     bot.register_next_step_handler(msg, save_product_desc)
 
 def save_product_desc(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     try:
         new_desc = message.text.strip()
         CreateDatas.UpdateProductDescription(new_desc, edit_product_id)
@@ -1902,12 +1991,19 @@ def edit_product_price_prompt(message):
     id = message.from_user.id
     if not is_admin(id):
         return
-    msg = bot.send_message(id, "💰 Nhập giá mới (VD: 40000 hoặc 40,000):")
+    keyboard = create_cancel_keyboard()
+    msg = bot.send_message(id, "💰 Nhập giá mới (VD: 40000 hoặc 40,000):", reply_markup=keyboard)
     bot.register_next_step_handler(msg, save_product_price)
 
 def save_product_price(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     try:
         new_price = message.text.strip()
         CreateDatas.UpdateProductPrice(new_price, edit_product_id)
@@ -1922,12 +2018,19 @@ def edit_product_image_prompt(message):
     id = message.from_user.id
     if not is_admin(id):
         return
-    msg = bot.send_message(id, "🖼 Gửi link ảnh mới cho sản phẩm:")
+    keyboard = create_cancel_keyboard()
+    msg = bot.send_message(id, "🖼 Gửi link ảnh mới cho sản phẩm:", reply_markup=keyboard)
     bot.register_next_step_handler(msg, save_product_image)
 
 def save_product_image(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     try:
         new_image = message.text.strip()
         CreateDatas.UpdateProductproductimagelink(new_image, edit_product_id)
@@ -4000,7 +4103,8 @@ def SetupBankAccount(message):
     lang = get_user_lang(id)
     
     if is_admin(id):
-        msg = bot.send_message(id, get_text("reply_bank_code", lang))
+        keyboard = create_cancel_keyboard()
+        msg = bot.send_message(id, get_text("reply_bank_code", lang), reply_markup=keyboard)
         bot.register_next_step_handler(msg, setup_bank_code)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -4010,10 +4114,16 @@ def setup_bank_code(message):
     lang = get_user_lang(id)
     username = message.from_user.username or "admin"
     
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     if is_admin(id):
         global bank_setup_data
         bank_setup_data = {"bank_code": message.text.upper().strip()}
-        msg = bot.send_message(id, get_text("reply_account_number", lang))
+        keyboard = create_cancel_keyboard()
+        msg = bot.send_message(id, get_text("reply_account_number", lang), reply_markup=keyboard)
         bot.register_next_step_handler(msg, setup_account_number)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -4022,9 +4132,15 @@ def setup_account_number(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
+    
     if is_admin(id):
         bank_setup_data["account_number"] = message.text.strip()
-        msg = bot.send_message(id, get_text("reply_account_name", lang))
+        keyboard = create_cancel_keyboard()
+        msg = bot.send_message(id, get_text("reply_account_name", lang), reply_markup=keyboard)
         bot.register_next_step_handler(msg, setup_account_name)
     else:
         bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
@@ -4033,6 +4149,11 @@ def setup_account_name(message):
     id = message.from_user.id
     lang = get_user_lang(id)
     username = message.from_user.username or "admin"
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        send_welcome(message)
+        return
     
     if is_admin(id):
         bank_setup_data["account_name"] = message.text.strip().upper()
