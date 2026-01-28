@@ -287,8 +287,9 @@ def payos_webhook():
         
         # Save order to database
         CreateDatas.AddOrder(
-            user_id, username, product_name, price, orderdate,
-            "PayOS", "", productkeys, ordernumber, product_number, ""
+            ordernumber, user_id, username, product_name, price, product_number, 
+            payment_id=str(webhook_data.get("paymentLinkId", "")),
+            paidmethod='PayOS'
         )
         
         # Delete QR message

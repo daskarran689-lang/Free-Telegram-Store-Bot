@@ -8,6 +8,7 @@ Database module using Supabase REST API
 
 import os
 import logging
+import time
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
@@ -99,14 +100,30 @@ class SupabaseRESTTable:
                 prefer = f"{prefer},count=exact".strip(",")
             headers["Prefer"] = prefer
 
-        response = requests.request(
-            self.method,
-            url,
-            headers=headers,
-            params=self.params if self.params else None,
-            json=self.payload,
-            timeout=self.client.timeout
-        )
+        last_error = None
+        response = None
+        for attempt in range(self.client.retries):
+            try:
+                response = self.client.session.request(
+                    self.method,
+                    url,
+                    headers=headers,
+                    params=self.params if self.params else None,
+                    json=self.payload,
+                    timeout=self.client.timeout
+                )
+                break
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt < self.client.retries - 1:
+                    backoff = self.client.backoff * (2 ** attempt)
+                    time.sleep(backoff)
+                    continue
+                logger.error(f"Supabase REST request failed: {e}")
+                return SupabaseResponse(data=[], count=None, error=str(e), status_code=None)
+
+        if response is None:
+            return SupabaseResponse(data=[], count=None, error=str(last_error), status_code=None)
 
         count = None
         if self._count:
@@ -139,10 +156,13 @@ class SupabaseRESTTable:
 
 
 class SupabaseRESTClient:
-    def __init__(self, base_url, api_key, timeout=15):
+    def __init__(self, base_url, api_key, timeout=15, retries=3, backoff=0.5):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.retries = retries
+        self.backoff = backoff
+        self.session = requests.Session()
         self.headers = {
             "apikey": api_key,
             "Authorization": f"Bearer {api_key}",
@@ -237,7 +257,7 @@ class CreateDatas:
             return False
     
     @staticmethod
-    def AddOrder(ordernumber, buyerid, buyerusername, productname, productprice, productnumber, payment_id=None):
+    def AddOrder(ordernumber, buyerid, buyerusername, productname, productprice, productnumber, payment_id=None, paidmethod='PENDING'):
         """Add a new order"""
         try:
             supabase.table(TABLE_ORDERS).insert({
@@ -248,7 +268,7 @@ class CreateDatas:
                 'productprice': str(productprice),
                 'productnumber': productnumber,
                 'payment_id': payment_id,
-                'paidmethod': 'PENDING'
+                'paidmethod': paidmethod
             }).execute()
             return True
         except Exception as e:
