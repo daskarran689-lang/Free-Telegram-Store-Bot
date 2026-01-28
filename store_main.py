@@ -120,6 +120,25 @@ def is_admin(user_id):
     """Check if user_id is an admin - uses cache for speed"""
     return is_admin_cached(user_id, default_admin_id)
 
+# Maintenance mode - when True, only admins can use the bot
+maintenance_mode = False
+
+def is_maintenance_mode():
+    """Check if bot is in maintenance mode"""
+    return maintenance_mode
+
+def set_maintenance_mode(enabled: bool):
+    """Enable/disable maintenance mode"""
+    global maintenance_mode
+    maintenance_mode = enabled
+    return maintenance_mode
+
+def check_maintenance(user_id):
+    """Check if user can access bot (returns True if allowed)"""
+    if not maintenance_mode:
+        return True
+    return is_admin(user_id)
+
 # Hàm lấy display name cho user
 def get_user_display_name(message):
     """Lấy tên hiển thị: @username nếu có, hoặc first_name - user_id"""
@@ -441,6 +460,11 @@ def callback_query(call):
     try:
         user_id = call.from_user.id
         lang = get_user_lang(user_id)
+        
+        # Check maintenance mode - only allow admins
+        if maintenance_mode and not is_admin(user_id):
+            bot.answer_callback_query(call.id, "🔧 Bot đang bảo trì, vui lòng quay lại sau!")
+            return
         
         # Check rate limit (anti-spam)
         if not check_rate_limit(user_id):
@@ -786,10 +810,16 @@ def send_welcome(message):
             key4 = types.KeyboardButton(text=get_text("news_to_users", lang))
             key5 = types.KeyboardButton(text=get_text("switch_to_user", lang))
             key6 = types.KeyboardButton(text="🎁 Quản lý khuyến mãi")
+            # Maintenance mode button
+            if maintenance_mode:
+                key7 = types.KeyboardButton(text="🟢 BẬT Bot (đang tắt)")
+            else:
+                key7 = types.KeyboardButton(text="🔴 TẮT Bot (bảo trì)")
             keyboardadmin.add(key0)
             keyboardadmin.add(key1, key2)
             keyboardadmin.add(key3, key4)
             keyboardadmin.add(key5, key6)
+            keyboardadmin.add(key7)
 
             # Get promotion status
             promo_info = PromotionDB.get_promotion_info()
@@ -803,6 +833,11 @@ def send_welcome(message):
             store_statistics = f"{get_text('store_statistics', lang)}\n\n{get_text('total_users', lang)}: {all_user_s}\n{get_text('total_admins', lang)}: {all_admin_s}\n{get_text('total_products', lang)}: {all_product_s}\n{get_text('total_orders', lang)}: {all_orders_s}{promo_status}"
             bot.send_message(message.chat.id, f"{get_text('welcome_admin', lang)}\n\n{store_statistics}", reply_markup=keyboardadmin, parse_mode='Markdown')
         else:
+            # Customer - check maintenance mode first
+            if maintenance_mode:
+                bot.send_message(id, "🔧 *BOT ĐANG BẢO TRÌ*\n\nVui lòng quay lại sau!\nXin lỗi vì sự bất tiện này.", parse_mode='Markdown')
+                return
+                
             # Customer - minimal DB calls
             # Check if new user
             existing_users = GetDataFromDB.GetUserIDsInDB() or []
@@ -844,6 +879,29 @@ def send_welcome(message):
 def is_manage_users_button(text):
     keywords = ["Quản lý người dùng", "quản lý người dùng", "Manage Users"]
     return any(kw in text for kw in keywords)
+
+# Handler for maintenance mode toggle
+def is_maintenance_toggle_button(text):
+    return "TẮT Bot (bảo trì)" in text or "BẬT Bot (đang tắt)" in text
+
+@bot.message_handler(content_types=["text"], func=lambda message: is_maintenance_toggle_button(message.text))
+def toggle_maintenance_mode(message):
+    global maintenance_mode
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        bot.send_message(id, "❌ Chỉ admin mới có quyền truy cập!", reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    if "TẮT Bot" in message.text:
+        # Turn ON maintenance mode (bot is OFF for users)
+        set_maintenance_mode(True)
+        bot.send_message(id, "🔴 *ĐÃ TẮT BOT*\n\n⚠️ Bot đang ở chế độ bảo trì.\nChỉ admin mới có thể sử dụng.\n\nNhấn 🏠 để cập nhật menu.", parse_mode='Markdown')
+    else:
+        # Turn OFF maintenance mode (bot is ON for users)
+        set_maintenance_mode(False)
+        bot.send_message(id, "🟢 *ĐÃ BẬT BOT*\n\n✅ Bot hoạt động bình thường.\nMọi người đều có thể sử dụng.\n\nNhấn 🏠 để cập nhật menu.", parse_mode='Markdown')
 
 # Manage users handler
 @bot.message_handler(content_types=["text"], func=lambda message: is_manage_users_button(message.text))
@@ -2738,6 +2796,12 @@ def handle_product_selection_button(message):
 @bot.message_handler(content_types=["text"], func=lambda message: is_shop_items_button(message.text))
 def shop_items_handler(message):
     user_id = message.from_user.id
+    lang = get_user_lang(user_id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(user_id):
+        bot.send_message(user_id, "🔧 *BOT ĐANG BẢO TRÌ*\n\nVui lòng quay lại sau!", parse_mode='Markdown')
+        return
     
     # Check rate limit
     if not check_rate_limit(user_id):
