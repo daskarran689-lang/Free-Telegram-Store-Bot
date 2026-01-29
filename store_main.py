@@ -307,7 +307,105 @@ def payos_webhook():
         quantity = order_info["quantity"]
         product_number = order_info["product_number"]
         orderdate = order_info["orderdate"]
+        is_upgrade = order_info.get("is_upgrade", False)  # Check if this is an upgrade order
         
+        # Get user language
+        lang = get_user_lang(user_id)
+        
+        # Delete QR message first
+        if ordernumber in pending_qr_messages:
+            try:
+                msg_info = pending_qr_messages[ordernumber]
+                bot.delete_message(msg_info["chat_id"], msg_info["message_id"])
+            except:
+                pass
+            del pending_qr_messages[ordernumber]
+        
+        # Handle UPGRADE orders differently - don't assign new accounts
+        if is_upgrade:
+            # Save order to database (no product keys for upgrade)
+            CreateDatas.AddOrder(
+                ordernumber, user_id, username, product_name, price, product_number, 
+                payment_id=str(webhook_data.get("paymentLinkId", "")),
+                paidmethod='PayOS'
+            )
+            
+            # Send success message for UPGRADE order
+            warranty_type = order_info.get("warranty_type", "kbh")
+            warranty_label = "BH 3 tháng" if warranty_type == "bh3" else "KBH"
+            
+            try:
+                price_num = int(float(str(price).replace(',', '')))
+            except:
+                price_num = price
+            
+            buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
+            buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
+            buyer_msg += f"📦 Gói: *{product_name}*\n"
+            buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"📌 *BƯỚC TIẾP THEO:*\n"
+            buyer_msg += f"Vui lòng inbox Admin kèm:\n"
+            buyer_msg += f"• Mã đơn hàng: `{ordernumber}`\n"
+            buyer_msg += f"• Tài khoản Canva của bạn\n"
+            buyer_msg += f"• Mật khẩu (nếu có)\n"
+            buyer_msg += f"• Cung cấp mã xác thực khi Admin yêu cầu\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"⏳ Admin sẽ xử lý trong vòng 24h!"
+            
+            try:
+                bot.send_message(user_id, buyer_msg, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"PayOS: Error sending upgrade buyer message: {e}")
+                bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
+            
+            # Send success photo
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+            nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+            success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
+            try:
+                bot.send_photo(user_id, success_photo, reply_markup=nav_keyboard)
+            except:
+                pass
+            
+            # Edit admin notification for UPGRADE
+            admin_msg = f"✅ *Đơn UP LẠI CANVA đã thanh toán!*\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+            admin_msg += f"👤 Khách: @{username}\n"
+            admin_msg += f"📦 Sản phẩm: {product_name}\n"
+            admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"⏳ *Chờ khách inbox thông tin tài khoản Canva*"
+            
+            if ordernumber in pending_admin_messages:
+                for msg_info in pending_admin_messages[ordernumber]:
+                    try:
+                        bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown")
+                    except:
+                        pass
+                del pending_admin_messages[ordernumber]
+            else:
+                admins = GetDataFromDB.GetAdminIDsInDB() or []
+                for admin in admins:
+                    try:
+                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                    except:
+                        pass
+            
+            # Cleanup
+            if ordernumber in pending_orders_info:
+                del pending_orders_info[ordernumber]
+            if ordernumber in pending_order_quantities:
+                del pending_order_quantities[ordernumber]
+            
+            logger.info(f"PayOS: Upgrade order {ordernumber} confirmed!")
+            return "ok", 200
+        
+        # === NORMAL ORDER (not upgrade) - assign new accounts ===
         # Get Canva accounts
         canva_accounts = CanvaAccountDB.get_available_accounts(quantity)
         
@@ -329,15 +427,6 @@ def payos_webhook():
             payment_id=str(webhook_data.get("paymentLinkId", "")),
             paidmethod='PayOS'
         )
-        
-        # Delete QR message
-        if ordernumber in pending_qr_messages:
-            try:
-                msg_info = pending_qr_messages[ordernumber]
-                bot.delete_message(msg_info["chat_id"], msg_info["message_id"])
-            except:
-                pass
-            del pending_qr_messages[ordernumber]
         
         # Check promotion
         promo_msg = ""
@@ -364,7 +453,6 @@ def payos_webhook():
                 promo_msg += f"📩 Inbox Admin kèm mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
         
         # Send success message to buyer
-        lang = get_user_lang(user_id)
         try:
             price_num = int(float(str(price).replace(',', '')))
         except:
