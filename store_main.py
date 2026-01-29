@@ -123,6 +123,9 @@ def is_admin(user_id):
 # Maintenance mode - when True, only admins can use the bot
 maintenance_mode = False
 
+# Upgrade product mode - when False, "Up lại Canva Edu" product is hidden
+upgrade_product_enabled = True
+
 def is_maintenance_mode():
     """Check if bot is in maintenance mode"""
     return maintenance_mode
@@ -133,11 +136,36 @@ def set_maintenance_mode(enabled: bool):
     maintenance_mode = enabled
     return maintenance_mode
 
+def is_upgrade_product_enabled():
+    """Check if upgrade product is enabled"""
+    return upgrade_product_enabled
+
+def set_upgrade_product_enabled(enabled: bool):
+    """Enable/disable upgrade product"""
+    global upgrade_product_enabled
+    upgrade_product_enabled = enabled
+    return upgrade_product_enabled
+
 def check_maintenance(user_id):
     """Check if user can access bot (returns True if allowed)"""
     if not maintenance_mode:
         return True
     return is_admin(user_id)
+
+def send_maintenance_message(message):
+    """Send maintenance mode message to user"""
+    bot.send_message(message.chat.id, "🔧 *BOT ĐANG BẢO TRÌ*\n\nVui lòng quay lại sau!\nXin lỗi vì sự bất tiện này.", parse_mode='Markdown')
+
+def maintenance_check(func):
+    """Decorator to check maintenance mode before executing handler"""
+    def wrapper(message):
+        user_id = message.from_user.id
+        if maintenance_mode and not is_admin(user_id):
+            send_maintenance_message(message)
+            return
+        return func(message)
+    wrapper.__name__ = func.__name__
+    return wrapper
 
 # Hàm lấy display name cho user
 def get_user_display_name(message):
@@ -610,7 +638,10 @@ def callback_query(call):
             show_canva_product_details(user_id, lang, call.message.chat.id, call.message.message_id)
             return
         elif call.data == "product_upgrade":
-            # Handle Up lại Canva Edu product selection - edit message to show warranty options
+            # Handle Up lại Canva Edu product selection - check if enabled
+            if not upgrade_product_enabled:
+                bot.answer_callback_query(call.id, "❌ Sản phẩm này tạm thời không khả dụng!", show_alert=True)
+                return
             bot.answer_callback_query(call.id, "Đang xử lý...")
             show_upgrade_product_details(user_id, lang, call.message.chat.id, call.message.message_id)
             return
@@ -707,19 +738,24 @@ def callback_query(call):
             inline_kb.row(
                 types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
             )
-            inline_kb.row(
-                types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
-            )
+            # Only show upgrade product if enabled
+            if upgrade_product_enabled:
+                inline_kb.row(
+                    types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
+                )
             try:
                 bot.edit_message_text("👇 Chọn sản phẩm:", call.message.chat.id, call.message.message_id, reply_markup=inline_kb)
             except:
                 bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
             # Update reply keyboard
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            nav_keyboard.row(
-                types.KeyboardButton(text="🛍 Canva Edu Admin"),
-                types.KeyboardButton(text="♻️ Up lại Canva Edu")
-            )
+            if upgrade_product_enabled:
+                nav_keyboard.row(
+                    types.KeyboardButton(text="🛍 Canva Edu Admin"),
+                    types.KeyboardButton(text="♻️ Up lại Canva Edu")
+                )
+            else:
+                nav_keyboard.row(types.KeyboardButton(text="🛍 Canva Edu Admin"))
             nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
             update_reply_keyboard(user_id, nav_keyboard)
             return
@@ -898,6 +934,32 @@ def toggle_maintenance_mode(message):
         # Turn OFF maintenance mode (bot is ON for users)
         set_maintenance_mode(False)
         bot.send_message(id, "🟢 *ĐÃ BẬT BOT*\n\n✅ Bot hoạt động bình thường.\nMọi người đều có thể sử dụng.\n\nNhấn 🏠 để cập nhật menu.", parse_mode='Markdown')
+
+# Handler for upgrade product toggle
+def is_upgrade_toggle_button(text):
+    return "TẮT bán Up lại" in text or "BẬT bán Up lại" in text
+
+@bot.message_handler(content_types=["text"], func=lambda message: is_upgrade_toggle_button(message.text))
+def toggle_upgrade_product(message):
+    global upgrade_product_enabled
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        bot.send_message(id, "❌ Chỉ admin mới có quyền truy cập!", reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    if "TẮT bán Up lại" in message.text:
+        # Turn OFF upgrade product (hide from menu)
+        set_upgrade_product_enabled(False)
+        bot.send_message(id, "🔴 *ĐÃ TẮT BÁN SẢN PHẨM UP LẠI*\n\n⚠️ Sản phẩm 'Up lại Canva Edu' đã bị ẩn.\nKhách hàng sẽ không thấy sản phẩm này.", parse_mode='Markdown')
+    else:
+        # Turn ON upgrade product (show in menu)
+        set_upgrade_product_enabled(True)
+        bot.send_message(id, "🟢 *ĐÃ BẬT BÁN SẢN PHẨM UP LẠI*\n\n✅ Sản phẩm 'Up lại Canva Edu' đã hiển thị.\nKhách hàng có thể mua sản phẩm này.", parse_mode='Markdown')
+    
+    # Refresh Canva management menu
+    manage_canva_accounts(message)
 
 # Manage users handler
 @bot.message_handler(content_types=["text"], func=lambda message: is_manage_users_button(message.text))
@@ -1079,10 +1141,16 @@ def manage_canva_accounts(message):
     keyboard.row(types.KeyboardButton(text="📋 Danh sách tài khoản"))
     keyboard.row(types.KeyboardButton(text="🗑 Xóa tài khoản Canva"))
     keyboard.row(types.KeyboardButton(text="📊 Thống kê tài khoản"))
+    # Upgrade product toggle button
+    if upgrade_product_enabled:
+        keyboard.row(types.KeyboardButton(text="🔴 TẮT bán Up lại (đang bật)"))
+    else:
+        keyboard.row(types.KeyboardButton(text="🟢 BẬT bán Up lại (đang tắt)"))
     keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
     
     count = CanvaAccountDB.get_account_count()
-    bot.send_message(id, f"📧 Quản lý tài khoản Canva\n\n📊 Còn {count} tài khoản khả dụng", reply_markup=keyboard)
+    upgrade_status = "✅ Đang bán" if upgrade_product_enabled else "❌ Đã tắt"
+    bot.send_message(id, f"📧 Quản lý tài khoản Canva\n\n📊 Còn {count} tài khoản khả dụng\n♻️ Sản phẩm Up lại: {upgrade_status}", reply_markup=keyboard)
 
 # Handler for add Canva account
 @bot.message_handler(content_types=["text"], func=lambda message: message.text == "➕ Thêm tài khoản Canva")
@@ -1301,6 +1369,12 @@ def handle_get_otp(message):
     """Handle get OTP button - retrieve login code from TempMail"""
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(user_id):
+        send_maintenance_message(message)
+        return
+    
     display_name = get_user_display_name(message)
     
     if not is_admin(user_id):
@@ -1333,6 +1407,11 @@ def handle_delete_account_menu(message):
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
     
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(user_id):
+        send_maintenance_message(message)
+        return
+    
     accounts = CanvaAccountDB.get_buyer_accounts(user_id)
     
     if not accounts:
@@ -1358,6 +1437,12 @@ def handle_delete_account_confirm(message):
     """Delete Canva account from user's list"""
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(user_id):
+        send_maintenance_message(message)
+        return
+    
     logger.info(f"Delete account request: {message.text}")
     
     # Extract email - handle different formats
@@ -1389,6 +1474,12 @@ def handle_email_selection(message):
     """Handle email selection for OTP retrieval"""
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(user_id):
+        send_maintenance_message(message)
+        return
+    
     email = message.text.replace("📧 ", "")
     get_otp_for_email(user_id, email, lang)
 
@@ -2054,6 +2145,12 @@ def handle_buy_with_quantity(message, warranty_type="kbh"):
     """Handle buy button press with quantity"""
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     username = message.from_user.username or "user"
     
     # Extract quantity from button text: "🛒 Mua (5)" -> 5
@@ -2086,12 +2183,16 @@ def handle_buy_with_quantity(message, warranty_type="kbh"):
 def handle_warranty_button(message):
     """Handle warranty type button press"""
     id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
     
     # Check rate limit
     if not check_rate_limit(id):
         return
-    
-    lang = get_user_lang(id)
     
     if message.text in ["🛡 Mua BH 3 tháng", "🛡 BH 3 tháng"]:
         show_quantity_selection(id, "bh3", lang)
@@ -2103,12 +2204,22 @@ def handle_warranty_button(message):
 def handle_upgrade_button(message):
     """Handle upgrade canva button press"""
     id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
     
     # Check rate limit
     if not check_rate_limit(id):
         return
     
-    lang = get_user_lang(id)
+    # Check if upgrade product is enabled
+    if not upgrade_product_enabled:
+        bot.send_message(id, "❌ *Sản phẩm này tạm thời không khả dụng!*\n\nVui lòng quay lại sau.", reply_markup=create_main_keyboard(lang, id), parse_mode='Markdown')
+        return
+    
     show_upgrade_canva_options(id, lang)
 
 # Handler for upgrade warranty button (BH 3 tháng - 120K / KBH - 50K)
@@ -2117,7 +2228,18 @@ def handle_upgrade_warranty_button(message):
     """Handle upgrade warranty button press from reply keyboard"""
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     username = message.from_user.username or "user"
+    
+    # Check if upgrade product is enabled
+    if not upgrade_product_enabled:
+        bot.send_message(id, "❌ *Sản phẩm này tạm thời không khả dụng!*\n\nVui lòng quay lại sau.", reply_markup=create_main_keyboard(lang, id), parse_mode='Markdown')
+        return
     
     if message.text == "🛡 BH 3 tháng - 120K":
         process_upgrade_canva_order(id, username, "bh3", lang)
@@ -2129,16 +2251,24 @@ def handle_upgrade_warranty_button(message):
 def handle_product_selection_button(message):
     """Handle product selection button press from /buy menu"""
     id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
     
     # Check rate limit
     if not check_rate_limit(id):
         return
     
-    lang = get_user_lang(id)
-    
     if message.text == "🛍 Canva Edu Admin":
         show_canva_product_details(id, lang)
     else:  # "♻️ Up lại Canva Edu"
+        # Check if upgrade product is enabled
+        if not upgrade_product_enabled:
+            bot.send_message(id, "❌ *Sản phẩm này tạm thời không khả dụng!*\n\nVui lòng quay lại sau.", reply_markup=create_main_keyboard(lang, id), parse_mode='Markdown')
+            return
         show_upgrade_product_details(id, lang)
 
 #Command handler and fucntion to shop Items
@@ -2169,21 +2299,26 @@ def shop_items_handler(message):
         keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
         bot.send_message(user_id, get_text("no_product_store", lang), reply_markup=keyboard)
     else:
-        # Inline keyboard với 2 nút sản phẩm
+        # Inline keyboard với sản phẩm
         inline_kb = types.InlineKeyboardMarkup(row_width=1)
         inline_kb.row(
             types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
         )
-        inline_kb.row(
-            types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
-        )
+        # Only show upgrade product if enabled
+        if upgrade_product_enabled:
+            inline_kb.row(
+                types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade")
+            )
         
-        # Reply keyboard với 2 nút sản phẩm
+        # Reply keyboard với sản phẩm
         nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        nav_keyboard.row(
-            types.KeyboardButton(text="🛍 Canva Edu Admin"),
-            types.KeyboardButton(text="♻️ Up lại Canva Edu")
-        )
+        if upgrade_product_enabled:
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛍 Canva Edu Admin"),
+                types.KeyboardButton(text="♻️ Up lại Canva Edu")
+            )
+        else:
+            nav_keyboard.row(types.KeyboardButton(text="🛍 Canva Edu Admin"))
         nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
         
         # Gửi message với inline keyboard
@@ -2202,6 +2337,12 @@ def orders_command(message):
     """Show user orders"""
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     # Trigger the orders handler
     message.text = get_text("my_orders", lang)
     MyOrdersList(message)
@@ -2211,6 +2352,12 @@ def support_command(message):
     """Show support info"""
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     support_msg = "💬 *Hỗ trợ*\n━━━━━━━━━━━━━━━━━━━━\n"
     support_msg += "📞 Liên hệ: @dlndai\n"
     support_msg += "⏰ Hỗ trợ 24/7\n"
@@ -2223,6 +2370,12 @@ def help_command(message):
     """Show help/commands info"""
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     help_msg = "📖 *HƯỚNG DẪN SỬ DỤNG BOT*\n"
     help_msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
     help_msg += "📌 *Các lệnh có sẵn:*\n"
@@ -2642,6 +2795,12 @@ def is_my_orders_button(text):
 def MyOrdersList(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     display_name = get_user_display_name(message)
     
     if not is_admin(id):
@@ -2694,6 +2853,12 @@ def is_support_button(text):
 def ContactSupport(message):
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
     display_name = get_user_display_name(message)
     support_username = os.getenv("SUPPORT_USERNAME", "dlndai")
     
