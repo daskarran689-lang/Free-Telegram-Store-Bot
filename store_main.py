@@ -1448,22 +1448,11 @@ def manage_users(message):
         bot.send_message(id, "📭 Chưa có người dùng nào!", reply_markup=keyboard)
         return
     
-    msg = f"👥 *DANH SÁCH NGƯỜI DÙNG*\n"
+    msg = f"👥 *QUẢN LÝ NGƯỜI DÙNG*\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n"
     msg += f"📊 Tổng: {len(all_users)} người dùng\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-    
-    for i, user in enumerate(all_users, 1):
-        uid, uname, uwallet, created_at = user
-        if created_at:
-            created_str = str(created_at)[:10] if created_at else "N/A"
-        else:
-            created_str = "N/A"
-        # Hiển thị đúng format - escape ký tự Markdown
-        display = get_user_display_name_from_data(uname, uid)
-        safe_display = display.replace("_", "\\_").replace("*", "\\*")
-        msg += f"{i}. {safe_display}\n"
-        msg += f"   📅 Tham gia: {created_str}\n"
+    msg += f"Nhấn nút bên dưới để gán tài khoản cho user"
     
     try:
         bot.send_message(id, msg, reply_markup=keyboard, parse_mode="Markdown")
