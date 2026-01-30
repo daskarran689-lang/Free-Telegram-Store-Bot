@@ -993,6 +993,37 @@ def callback_query(call):
             if user_id in assign_account_state:
                 del assign_account_state[user_id]
             return
+        elif call.data.startswith("quick_assign_"):
+            # Handle quick assign from /myid command
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            # Parse: quick_assign_{target_user_id}
+            try:
+                target_user_id = int(call.data.replace("quick_assign_", ""))
+            except ValueError:
+                bot.answer_callback_query(call.id, "❌ Lỗi dữ liệu!", show_alert=True)
+                return
+            
+            bot.answer_callback_query(call.id, "Đang mở form gán tài khoản...")
+            
+            # Store target user ID and start email input
+            assign_account_state[user_id] = {'target_user_id': target_user_id}
+            
+            keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            keyboard.row(types.KeyboardButton(text="❌ Hủy"))
+            
+            msg = f"🎁 *GÁN TÀI KHOẢN CHO USER*\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"👤 User ID: `{target_user_id}`\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            msg += f"📝 Nhập email Canva cần gán:\n"
+            msg += f"_(Ví dụ: example@domain.com)_"
+            
+            sent_msg = bot.send_message(call.message.chat.id, msg, reply_markup=keyboard, parse_mode="Markdown")
+            bot.register_next_step_handler(sent_msg, admin_assign_account_get_email)
+            return
         else:
             logger.warning(f"Unknown callback data: {call.data}")
     except Exception as e:
@@ -2848,20 +2879,40 @@ def help_command(message):
 
 @bot.message_handler(commands=['myid'])
 def myid_command(message):
-    """Show user's ID - hidden command for admin assignment"""
+    """Show user's ID and send to admin for assignment"""
     id = message.from_user.id
     username = message.from_user.username or "N/A"
     first_name = message.from_user.first_name or "User"
+    lang = get_user_lang(id)
     
-    msg = f"🆔 *THÔNG TIN TÀI KHOẢN*\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"👤 Tên: {first_name}\n"
-    msg += f"📛 Username: @{username}\n"
-    msg += f"🔢 User ID: `{id}`\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"_Gửi User ID này cho Admin để được gán tài khoản_"
+    # Send confirmation to user
+    user_msg = f"✅ *ĐÃ GỬI THÔNG TIN CHO ADMIN!*\n"
+    user_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    user_msg += f"🔢 User ID của bạn: `{id}`\n"
+    user_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    user_msg += f"_Admin sẽ liên hệ bạn sớm nhất_"
     
-    bot.send_message(id, msg, parse_mode="Markdown")
+    bot.send_message(id, user_msg, parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
+    
+    # Send to admin with inline button to assign directly
+    admin_msg = f"📩 *YÊU CẦU GÁN TÀI KHOẢN*\n"
+    admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    admin_msg += f"👤 Tên: {first_name}\n"
+    admin_msg += f"📛 Username: @{username}\n"
+    admin_msg += f"🔢 User ID: `{id}`\n"
+    admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    admin_msg += f"_Nhấn nút bên dưới để gán tài khoản_"
+    
+    inline_kb = types.InlineKeyboardMarkup(row_width=1)
+    inline_kb.add(types.InlineKeyboardButton(text=f"🎁 Gán tài khoản cho {id}", callback_data=f"quick_assign_{id}"))
+    
+    # Send to all admins
+    admins = GetDataFromDB.GetAdminIDsInDB() or []
+    for admin in admins:
+        try:
+            bot.send_message(admin[0], admin_msg, parse_mode="Markdown", reply_markup=inline_kb)
+        except:
+            pass
 
 
 # Store pending QR message IDs to delete after payment confirmed
