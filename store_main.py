@@ -922,23 +922,22 @@ def callback_query(call):
             else:
                 bot.edit_message_text(f"❌ Lỗi khi gán đè tài khoản!", call.message.chat.id, call.message.message_id)
             return
-        elif call.data.startswith("assign_skip_pw_"):
-            # Handle skip password - assign without password
+        elif call.data == "assign_skip_pw":
+            # Handle skip password - assign without password, get data from state
             if not is_admin(user_id):
                 bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
                 return
             
-            # Parse: assign_skip_pw_{target_user_id}_{canva_email}
-            parts = call.data.replace("assign_skip_pw_", "").split("_", 1)
-            if len(parts) < 2:
-                bot.answer_callback_query(call.id, "❌ Lỗi dữ liệu!", show_alert=True)
+            # Get data from state
+            if user_id not in assign_account_state:
+                bot.answer_callback_query(call.id, "❌ Phiên đã hết hạn, vui lòng thử lại!", show_alert=True)
                 return
             
-            try:
-                target_user_id_str, canva_email = parts[0], parts[1]
-                target_user_id = int(target_user_id_str)
-            except (ValueError, IndexError):
-                bot.answer_callback_query(call.id, "❌ Lỗi dữ liệu!", show_alert=True)
+            target_user_id = assign_account_state[user_id].get('target_user_id')
+            canva_email = assign_account_state[user_id].get('canva_email')
+            
+            if not target_user_id or not canva_email:
+                bot.answer_callback_query(call.id, "❌ Thiếu thông tin!", show_alert=True)
                 return
             
             bot.answer_callback_query(call.id, "Đang gán tài khoản...")
@@ -1341,8 +1340,9 @@ def admin_assign_account_get_email(message):
         return
     
     # Ask for password (optional) - with inline button to skip
+    # Store email in state for callback to use
     inline_kb = types.InlineKeyboardMarkup(row_width=1)
-    inline_kb.add(types.InlineKeyboardButton(text="⏭ Bỏ qua (không có mật khẩu)", callback_data=f"assign_skip_pw_{target_user_id}_{canva_email}"))
+    inline_kb.add(types.InlineKeyboardButton(text="⏭ Bỏ qua (không có mật khẩu)", callback_data=f"assign_skip_pw"))
     inline_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data="assign_cancel"))
     
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -1353,12 +1353,9 @@ def admin_assign_account_get_email(message):
     msg += f"👤 User ID: `{target_user_id}`\n"
     msg += f"📧 Email: `{canva_email}`\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-    msg += f"📝 *Bước 3:* Nhập mật khẩu (nếu có):\n"
-    msg += f"_Hoặc nhấn nút 'Bỏ qua' bên dưới_"
+    msg += f"📝 *Bước 3:* Nhập mật khẩu hoặc nhấn Bỏ qua:"
     
     bot.send_message(id, msg, reply_markup=inline_kb, parse_mode="Markdown")
-    # Also update reply keyboard for cancel
-    bot.send_message(id, "👆 Nhập mật khẩu hoặc nhấn nút bỏ qua", reply_markup=keyboard)
     bot.register_next_step_handler(message, admin_assign_account_get_password)
 
 def admin_assign_account_get_password(message):
