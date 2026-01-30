@@ -777,6 +777,22 @@ class CanvaAccountDB:
             return False
     
     @staticmethod
+    def add_and_assign_account(email, buyer_id, order_number):
+        """Add a Canva account and assign to buyer immediately (for admin assign feature)"""
+        try:
+            supabase.table(TABLE_CANVA).upsert({
+                'email': email,
+                'authkey': 'admin_assigned',
+                'status': 'sold',
+                'buyer_id': buyer_id,
+                'order_number': order_number
+            }, on_conflict='email').execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error adding and assigning Canva account: {e}")
+            return False
+    
+    @staticmethod
     def get_available_accounts(count=1):
         """Get available accounts"""
         try:

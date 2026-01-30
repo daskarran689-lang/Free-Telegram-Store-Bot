@@ -773,12 +773,78 @@ def callback_query(call):
             if call.data == "assign_cancel":
                 bot.answer_callback_query(call.id, "Đã hủy")
                 bot.edit_message_text("❌ Đã hủy gán tài khoản", call.message.chat.id, call.message.message_id)
+                if user_id in assign_account_state:
+                    del assign_account_state[user_id]
                 return
             
             if call.data == "assign_more":
                 # Restart assign flow
                 bot.answer_callback_query(call.id, "Đang tải...")
                 admin_assign_account_start_inline(user_id, call.message.chat.id)
+                return
+            
+            if call.data == "assign_skip_pw":
+                # Handle skip password - assign without password, get data from state
+                if user_id not in assign_account_state:
+                    bot.answer_callback_query(call.id, "❌ Phiên đã hết hạn, vui lòng thử lại!", show_alert=True)
+                    return
+                
+                target_user_id = assign_account_state[user_id].get('target_user_id')
+                canva_email = assign_account_state[user_id].get('canva_email')
+                
+                if not target_user_id or not canva_email:
+                    bot.answer_callback_query(call.id, "❌ Thiếu thông tin!", show_alert=True)
+                    return
+                
+                bot.answer_callback_query(call.id, "Đang gán tài khoản...")
+                
+                order_num = f"ADMIN_{int(time.time())}"
+                
+                # Check if account exists
+                existing = CanvaAccountDB.get_account_by_email(canva_email)
+                if existing:
+                    # Account exists - just assign
+                    result = CanvaAccountDB.assign_account_to_buyer(existing['id'], target_user_id, order_num)
+                else:
+                    # Account doesn't exist - add and assign in one step (status = sold)
+                    result = CanvaAccountDB.add_and_assign_account(canva_email, target_user_id, order_num)
+                
+                if result:
+                    # Success - create inline buttons
+                    inline_kb = types.InlineKeyboardMarkup(row_width=1)
+                    inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy OTP: {canva_email}", callback_data=f"otp_{canva_email}"))
+                    inline_kb.add(types.InlineKeyboardButton(text="📋 Gán thêm tài khoản", callback_data="assign_more"))
+                    
+                    success_msg = f"✅ *GÁN TÀI KHOẢN THÀNH CÔNG!*\n"
+                    success_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                    success_msg += f"👤 User ID: `{target_user_id}`\n"
+                    success_msg += f"📧 Email: `{canva_email}`\n"
+                    success_msg += f"🆔 Mã đơn: `{order_num}`\n"
+                    success_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                    success_msg += f"_Nhấn nút bên dưới để lấy OTP hoặc gán thêm_"
+                    
+                    bot.edit_message_text(success_msg, call.message.chat.id, call.message.message_id, reply_markup=inline_kb, parse_mode="Markdown")
+                    
+                    # Notify the target user (no password)
+                    try:
+                        user_msg = f"✅ *ADMIN ĐÃ GÁN TÀI KHOẢN CHO BẠN!*\n"
+                        user_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                        user_msg += f"📧 Email: `{canva_email}`\n"
+                        user_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                        user_msg += f"_Nhấn nút bên dưới để lấy mã xác thực_"
+                        
+                        user_inline_kb = types.InlineKeyboardMarkup()
+                        user_inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy OTP", callback_data=f"otp_{canva_email}"))
+                        
+                        bot.send_message(target_user_id, user_msg, reply_markup=user_inline_kb, parse_mode="Markdown")
+                    except Exception as e:
+                        logger.warning(f"Could not notify user {target_user_id}: {e}")
+                else:
+                    bot.edit_message_text(f"❌ Lỗi khi gán tài khoản!", call.message.chat.id, call.message.message_id)
+                
+                # Cleanup state
+                if user_id in assign_account_state:
+                    del assign_account_state[user_id]
                 return
             
             # Parse callback data: assign_{account_id}_{target_user_id}
@@ -921,76 +987,6 @@ def callback_query(call):
                     logger.warning(f"Could not notify user {target_user_id}: {e}")
             else:
                 bot.edit_message_text(f"❌ Lỗi khi gán đè tài khoản!", call.message.chat.id, call.message.message_id)
-            return
-        elif call.data == "assign_skip_pw":
-            # Handle skip password - assign without password, get data from state
-            if not is_admin(user_id):
-                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
-                return
-            
-            # Get data from state
-            if user_id not in assign_account_state:
-                bot.answer_callback_query(call.id, "❌ Phiên đã hết hạn, vui lòng thử lại!", show_alert=True)
-                return
-            
-            target_user_id = assign_account_state[user_id].get('target_user_id')
-            canva_email = assign_account_state[user_id].get('canva_email')
-            
-            if not target_user_id or not canva_email:
-                bot.answer_callback_query(call.id, "❌ Thiếu thông tin!", show_alert=True)
-                return
-            
-            bot.answer_callback_query(call.id, "Đang gán tài khoản...")
-            
-            # Add account to database if not exists
-            existing = CanvaAccountDB.get_account_by_email(canva_email)
-            if not existing:
-                CanvaAccountDB.add_account(canva_email, 'admin_added')
-            
-            # Assign account
-            order_num = f"ADMIN_{int(time.time())}"
-            acc_info = CanvaAccountDB.get_account_by_email(canva_email)
-            if acc_info:
-                result = CanvaAccountDB.assign_account_to_buyer(acc_info['id'], target_user_id, order_num)
-            else:
-                result = False
-            
-            if result:
-                # Success - create inline buttons
-                inline_kb = types.InlineKeyboardMarkup(row_width=1)
-                inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy OTP: {canva_email}", callback_data=f"otp_{canva_email}"))
-                inline_kb.add(types.InlineKeyboardButton(text="📋 Gán thêm tài khoản", callback_data="assign_more"))
-                
-                success_msg = f"✅ *GÁN TÀI KHOẢN THÀNH CÔNG!*\n"
-                success_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                success_msg += f"👤 User ID: `{target_user_id}`\n"
-                success_msg += f"📧 Email: `{canva_email}`\n"
-                success_msg += f"🆔 Mã đơn: `{order_num}`\n"
-                success_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                success_msg += f"_Nhấn nút bên dưới để lấy OTP hoặc gán thêm_"
-                
-                bot.edit_message_text(success_msg, call.message.chat.id, call.message.message_id, reply_markup=inline_kb, parse_mode="Markdown")
-                
-                # Notify the target user (no password)
-                try:
-                    user_msg = f"✅ *ADMIN ĐÃ GÁN TÀI KHOẢN CHO BẠN!*\n"
-                    user_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    user_msg += f"📧 Email: `{canva_email}`\n"
-                    user_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    user_msg += f"_Nhấn nút bên dưới để lấy mã xác thực_"
-                    
-                    user_inline_kb = types.InlineKeyboardMarkup()
-                    user_inline_kb.add(types.InlineKeyboardButton(text=f"🔑 Lấy OTP", callback_data=f"otp_{canva_email}"))
-                    
-                    bot.send_message(target_user_id, user_msg, reply_markup=user_inline_kb, parse_mode="Markdown")
-                except Exception as e:
-                    logger.warning(f"Could not notify user {target_user_id}: {e}")
-            else:
-                bot.edit_message_text(f"❌ Lỗi khi gán tài khoản!", call.message.chat.id, call.message.message_id)
-            
-            # Cleanup state
-            if user_id in assign_account_state:
-                del assign_account_state[user_id]
             return
         elif call.data.startswith("quick_assign_"):
             # Handle quick assign from /myid command
@@ -1384,20 +1380,16 @@ def admin_assign_account_get_password(message):
     target_user_id = assign_account_state[id]['target_user_id']
     canva_email = assign_account_state[id]['canva_email']
     
-    # Add account to database if not exists
-    existing = CanvaAccountDB.get_account_by_email(canva_email)
-    if not existing:
-        CanvaAccountDB.add_account(canva_email, 'admin_added')
-    
-    # Assign account to user
     order_num = f"ADMIN_{int(time.time())}"
     
-    # Get account info to get ID
-    acc_info = CanvaAccountDB.get_account_by_email(canva_email)
-    if acc_info:
-        result = CanvaAccountDB.assign_account_to_buyer(acc_info['id'], target_user_id, order_num)
+    # Check if account exists
+    existing = CanvaAccountDB.get_account_by_email(canva_email)
+    if existing:
+        # Account exists - just assign
+        result = CanvaAccountDB.assign_account_to_buyer(existing['id'], target_user_id, order_num)
     else:
-        result = False
+        # Account doesn't exist - add and assign in one step (status = sold)
+        result = CanvaAccountDB.add_and_assign_account(canva_email, target_user_id, order_num)
     
     if result:
         # Success - create inline buttons
