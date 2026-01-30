@@ -2881,7 +2881,7 @@ def help_command(message):
 def myid_command(message):
     """Show user's ID and send to admin for assignment"""
     id = message.from_user.id
-    username = message.from_user.username or "N/A"
+    username = message.from_user.username
     first_name = message.from_user.first_name or "User"
     lang = get_user_lang(id)
     
@@ -2898,7 +2898,8 @@ def myid_command(message):
     admin_msg = f"📩 *YÊU CẦU GÁN TÀI KHOẢN*\n"
     admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
     admin_msg += f"👤 Tên: {first_name}\n"
-    admin_msg += f"📛 Username: @{username}\n"
+    if username:
+        admin_msg += f"📛 Username: @{username}\n"
     admin_msg += f"🔢 User ID: `{id}`\n"
     admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
     admin_msg += f"_Nhấn nút bên dưới để gán tài khoản_"
