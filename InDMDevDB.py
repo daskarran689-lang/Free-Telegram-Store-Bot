@@ -882,6 +882,50 @@ class CanvaAccountDB:
                     if CanvaAccountDB.add_account(email, 'no_authkey'):
                         count += 1
         return count
+    
+    @staticmethod
+    def assign_account_to_user_by_email(canva_email, buyer_id, order_number=None):
+        """Assign a specific Canva account to a user by email"""
+        try:
+            # First check if account exists and is available
+            result = supabase.table(TABLE_CANVA).select('id,status,buyer_id').eq('email', canva_email).execute()
+            if not result.data:
+                return {'success': False, 'error': 'Tài khoản không tồn tại'}
+            
+            account = result.data[0]
+            if account['status'] == 'sold' and account.get('buyer_id'):
+                return {'success': False, 'error': f"Tài khoản đã được gán cho user {account['buyer_id']}"}
+            
+            # Assign to buyer
+            supabase.table(TABLE_CANVA).update({
+                'buyer_id': buyer_id,
+                'order_number': order_number or f"ADMIN_{int(datetime.now().timestamp())}",
+                'status': 'sold'
+            }).eq('email', canva_email).execute()
+            
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"Error assigning account by email: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    @staticmethod
+    def get_account_by_email(email):
+        """Get account info by email"""
+        try:
+            result = supabase.table(TABLE_CANVA).select('*').eq('email', email).execute()
+            if result.data:
+                r = result.data[0]
+                return {
+                    'id': r['id'],
+                    'email': r['email'],
+                    'authkey': r.get('authkey'),
+                    'buyer_id': r.get('buyer_id'),
+                    'order_number': r.get('order_number'),
+                    'status': r['status']
+                }
+            return None
+        except:
+            return None
 
 
 # ============== PROMOTION OPERATIONS ==============

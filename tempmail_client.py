@@ -416,23 +416,31 @@ Attachments: {len(email.get('attachments', []))}
         return formatted
 
 
-# ============== EMAIL WORKER CLIENT (Domain mới: dlndaiiii.indevs.in) ==============
+# ============== EMAIL WORKER CLIENT v6 (Durable Objects - Real-time) ==============
 
 class EmailWorkerClient:
-    """Client for Email Worker API (domain: dlndaiiii.indevs.in)"""
+    """
+    Client for Email Worker API v6 with Durable Objects
+    Domains: dlndaiiii.indevs.in, dlndaiii.indevs.in
+    Features: Real-time wait, warmup, instant delivery
+    """
     
     WORKER_URL = "https://email-receiver.daidinh9875.workers.dev"
-    EMAIL_DOMAIN = "dlndaiiii.indevs.in"
+    EMAIL_DOMAINS = ['dlndaiiii.indevs.in', 'dlndaiii.indevs.in']
+    EMAIL_DOMAIN = 'dlndaiiii.indevs.in'  # Default domain
     
-    def __init__(self):
+    def __init__(self, domain: Optional[str] = None):
         self.session = requests.Session()
+        if domain and domain in self.EMAIL_DOMAINS:
+            self.EMAIL_DOMAIN = domain
     
-    def create_email(self, custom_name: Optional[str] = None) -> str:
+    def create_email(self, custom_name: Optional[str] = None, domain: Optional[str] = None) -> str:
         """
         Tạo email mới
         
         Args:
             custom_name: Tên email tùy chỉnh (không cần @domain)
+            domain: Domain tùy chọn (mặc định: dlndaiiii.indevs.in)
             
         Returns:
             str: Địa chỉ email đầy đủ
@@ -443,13 +451,33 @@ class EmailWorkerClient:
         if custom_name:
             name = custom_name.replace("@", "").replace(" ", "").lower()
         else:
-            name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            # Random name giống worker: adjective + noun + number
+            adjectives = ["swift", "clever", "bright", "cool", "fast", "smart", "quick", "happy", "lucky", "cyber"]
+            nouns = ["mail", "user", "inbox", "temp", "box", "msg", "note", "fox", "wolf", "hawk"]
+            name = random.choice(adjectives) + random.choice(nouns) + str(random.randint(0, 999))
         
-        return f"{name}@{self.EMAIL_DOMAIN}"
+        use_domain = domain if domain in self.EMAIL_DOMAINS else self.EMAIL_DOMAIN
+        return f"{name}@{use_domain}"
+    
+    def warmup(self, email_address: str) -> bool:
+        """
+        Warmup Durable Object cho email (pre-create để nhận email nhanh hơn)
+        
+        Args:
+            email_address: Địa chỉ email
+            
+        Returns:
+            bool: True nếu thành công
+        """
+        try:
+            r = self.session.get(f"{self.WORKER_URL}/p/{email_address}", timeout=10)
+            return r.status_code == 200
+        except:
+            return False
     
     def get_latest_email(self, email_address: str) -> Optional[Dict[str, Any]]:
         """
-        Lấy email mới nhất
+        Lấy email mới nhất (từ Durable Object, fallback KV)
         
         Args:
             email_address: Địa chỉ email
@@ -460,14 +488,40 @@ class EmailWorkerClient:
         try:
             r = self.session.get(f"{self.WORKER_URL}/m/{email_address}", timeout=10)
             if r.status_code == 200:
-                return r.json()
+                data = r.json()
+                return data if data else None
         except Exception as e:
             print(f"Error getting latest email: {e}")
         return None
     
+    def wait_for_email(self, email_address: str, after_ts: int = 0, timeout: int = 30) -> Optional[Dict[str, Any]]:
+        """
+        Real-time wait cho email mới (sử dụng Durable Objects)
+        
+        Args:
+            email_address: Địa chỉ email
+            after_ts: Timestamp sau đó mới nhận (milliseconds)
+            timeout: Timeout tính bằng giây (max 30s per request)
+            
+        Returns:
+            dict: Email mới hoặc None nếu timeout
+        """
+        try:
+            r = self.session.get(
+                f"{self.WORKER_URL}/w/{email_address}",
+                params={"after": after_ts, "timeout": timeout * 1000},
+                timeout=timeout + 5  # Buffer thêm 5s cho network
+            )
+            if r.status_code == 200:
+                data = r.json()
+                return data if data else None
+        except Exception as e:
+            print(f"Error waiting for email: {e}")
+        return None
+    
     def get_all_emails(self, email_address: str) -> List[Dict[str, Any]]:
         """
-        Lấy tất cả email
+        Lấy tất cả email (từ Durable Object)
         
         Args:
             email_address: Địa chỉ email
@@ -478,7 +532,7 @@ class EmailWorkerClient:
         try:
             r = self.session.get(f"{self.WORKER_URL}/a/{email_address}", timeout=10)
             if r.status_code == 200:
-                return r.json()
+                return r.json() or []
         except Exception as e:
             print(f"Error getting all emails: {e}")
         return []
@@ -499,9 +553,55 @@ class EmailWorkerClient:
         except:
             return False
     
+    def _decode_email_content(self, raw: str) -> str:
+        """
+        Decode email content (quoted-printable, base64)
+        
+        Args:
+            raw: Raw email content
+            
+        Returns:
+            str: Decoded content
+        """
+        if not raw:
+            return ""
+        
+        decoded = raw
+        
+        # Decode quoted-printable
+        if 'Content-Transfer-Encoding: quoted-printable' in raw.lower() or '=' in raw:
+            try:
+                # Remove soft line breaks
+                decoded = re.sub(r'=\r?\n', '', decoded)
+                # Decode hex codes
+                decoded = re.sub(r'=([0-9A-Fa-f]{2})', lambda m: chr(int(m.group(1), 16)), decoded)
+            except:
+                pass
+        
+        # Decode base64
+        if 'Content-Transfer-Encoding: base64' in raw.lower():
+            try:
+                import base64
+                # Find base64 content after headers
+                match = re.search(r'\r?\n\r?\n([A-Za-z0-9+/=\s]+)', raw)
+                if match:
+                    b64_content = match.group(1).replace('\r', '').replace('\n', '').replace(' ', '')
+                    decoded = base64.b64decode(b64_content).decode('utf-8', errors='ignore')
+            except:
+                pass
+        
+        # Try UTF-8 decode for special chars
+        try:
+            if '\xc3' in decoded or '\xe2' in decoded:
+                decoded = decoded.encode('latin-1').decode('utf-8', errors='ignore')
+        except:
+            pass
+        
+        return decoded
+    
     def find_otp(self, email_data: Dict[str, Any]) -> Optional[str]:
         """
-        Tìm OTP 6 số trong email - ưu tiên Subject
+        Tìm OTP trong email - thuật toán mới từ Worker v6
         
         Args:
             email_data: Dữ liệu email từ API
@@ -512,63 +612,93 @@ class EmailWorkerClient:
         if not email_data:
             return None
         
-        # Ưu tiên Subject (key 's')
+        # Decode content
+        raw = str(email_data.get('b', ''))
+        decoded_text = self._decode_email_content(raw)
         subject = str(email_data.get('s', ''))
-        otp = re.findall(r'\b\d{6}\b', subject)
-        if otp:
-            return otp[0]
         
-        # Tìm trong body (key 'b')
-        body = str(email_data.get('b', ''))
+        # Clean text: remove emails, HTML tags, long hex strings
+        clean_text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '', decoded_text)
+        clean_text = re.sub(r'<[^>]+>', '', clean_text)
+        clean_text = re.sub(r'\b[0-9a-f]{16,}\b', '', clean_text, flags=re.IGNORECASE)
         
-        # Bỏ header email, chỉ lấy phần content
-        plain_start = body.find('Content-Type: text/plain')
-        if plain_start > 0:
-            body = body[plain_start:]
+        # Context patterns (ưu tiên cao)
+        context_patterns = [
+            r'Mã của bạn là[:\s]*(\d{4,6})',
+            r'mã[:\s]+(\d{4,6})',
+            r'Mã xác minh[:\s]*(\d{4,6})',
+            r'Mã xác nhận[:\s]*(\d{4,6})',
+            r'(\d{6})\s*là\s*mã',
+            r'verification\s*code[:\s]*(\d{4,6})',
+            r'your\s*code[:\s]*(\d{4,6})',
+            r'code\s*is[:\s]*(\d{4,6})',
+            r'code[:\s]+(\d{4,6})',
+            r'OTP[:\s]+(\d{4,6})',
+            r'pin[:\s]+(\d{4,6})',
+            r'(\d{6})\s*is\s*your',
+            r':\s*(\d{6})\s*$',
+        ]
         
-        otp = re.findall(r'\b\d{6}\b', body)
-        # Loại bỏ các số không phải OTP
-        otp = [o for o in otp if o != '000000']
+        # Check subject first
+        for pattern in context_patterns:
+            match = re.search(pattern, subject, re.IGNORECASE)
+            if match:
+                return match.group(1)
         
-        return otp[0] if otp else None
+        # Check body with context
+        for pattern in context_patterns:
+            match = re.search(pattern, clean_text, re.IGNORECASE | re.MULTILINE)
+            if match:
+                return match.group(1)
+        
+        # Fallback: find 6-digit numbers
+        six_digits = re.findall(r'\b(\d{6})\b', clean_text)
+        invalid_codes = {'000000', '111111', '123456', '654321', '999999'}
+        for code in six_digits:
+            if code not in invalid_codes:
+                return code
+        
+        return None
     
-    def wait_for_otp(self, email_address: str, timeout: int = 120, interval: int = 2) -> Optional[str]:
+    def wait_for_otp(self, email_address: str, timeout: int = 120) -> Optional[str]:
         """
-        Chờ và lấy OTP từ email mới
+        Real-time wait cho OTP (sử dụng Durable Objects)
         
         Args:
             email_address: Địa chỉ email
             timeout: Thời gian chờ tối đa (giây)
-            interval: Khoảng thời gian giữa các lần check (giây)
             
         Returns:
             str: Mã OTP hoặc None nếu timeout
         """
         import time
         
-        start_time = time.time()
+        # Warmup Durable Object trước
+        self.warmup(email_address)
         
-        # Lấy số email hiện có để so sánh
-        existing_emails = self.get_all_emails(email_address)
-        last_count = len(existing_emails) if existing_emails else 0
+        # Lấy timestamp hiện tại để chỉ nhận email mới
+        latest = self.get_latest_email(email_address)
+        after_ts = latest.get('t', 0) if latest else 0
+        
+        start_time = time.time()
         
         while True:
             elapsed = time.time() - start_time
-            if elapsed >= timeout:
+            remaining = timeout - elapsed
+            
+            if remaining <= 0:
                 return None
             
-            # Check email mới
-            emails = self.get_all_emails(email_address)
-            current_count = len(emails) if emails else 0
+            # Real-time wait (max 30s per request)
+            wait_time = min(30, int(remaining))
+            new_email = self.wait_for_email(email_address, after_ts, wait_time)
             
-            if current_count > last_count:
-                # Có email mới - tìm OTP
-                new_email = emails[0]
+            if new_email and new_email.get('t', 0) > after_ts:
                 otp = self.find_otp(new_email)
                 if otp:
                     return otp
-            
-            time.sleep(interval)
+                # Update timestamp để không nhận lại email này
+                after_ts = new_email.get('t', after_ts)
         
         return None
     
@@ -624,7 +754,10 @@ class EmailWorkerClient:
         Returns:
             bool: True nếu là email Worker
         """
-        return email_address.endswith(f"@{EmailWorkerClient.EMAIL_DOMAIN}")
+        for domain in EmailWorkerClient.EMAIL_DOMAINS:
+            if email_address.endswith(f"@{domain}"):
+                return True
+        return False
 
 
 def get_email_client(email_address: str, tempmail_email: str = None, tempmail_password: str = None):
