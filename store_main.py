@@ -2846,6 +2846,24 @@ def help_command(message):
     bot.send_message(id, help_msg, parse_mode="Markdown", reply_markup=create_main_keyboard(lang, id))
 
 
+@bot.message_handler(commands=['myid'])
+def myid_command(message):
+    """Show user's ID - hidden command for admin assignment"""
+    id = message.from_user.id
+    username = message.from_user.username or "N/A"
+    first_name = message.from_user.first_name or "User"
+    
+    msg = f"🆔 *THÔNG TIN TÀI KHOẢN*\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"👤 Tên: {first_name}\n"
+    msg += f"📛 Username: @{username}\n"
+    msg += f"🔢 User ID: `{id}`\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"_Gửi User ID này cho Admin để được gán tài khoản_"
+    
+    bot.send_message(id, msg, parse_mode="Markdown")
+
+
 # Store pending QR message IDs to delete after payment confirmed
 pending_qr_messages = {}
 # Store pending order quantities
