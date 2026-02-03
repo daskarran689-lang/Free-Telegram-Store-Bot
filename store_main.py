@@ -757,6 +757,17 @@ def callback_query(call):
                 bot.edit_message_text("👇 Chọn sản phẩm:", call.message.chat.id, call.message.message_id, reply_markup=inline_kb)
             except:
                 bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
+            
+            # Update reply keyboard
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛍 Canva Edu Admin"),
+                types.KeyboardButton(text="🎫 Slot Canva Edu")
+            )
+            if upgrade_product_enabled:
+                nav_keyboard.row(types.KeyboardButton(text="♻️ Up lại Canva Edu"))
+            nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+            update_reply_keyboard(user_id, nav_keyboard)
             return
         elif call.data.startswith("slot_done_"):
             # Admin marks slot order as done
