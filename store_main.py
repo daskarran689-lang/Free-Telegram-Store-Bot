@@ -503,6 +503,9 @@ def payos_webhook():
             admin_msg += f"━━━━━━━━━━━━━━\n"
             admin_msg += f"⏳ *Chờ xử lý thêm slot cho khách*"
             
+            # Save email for later use when admin clicks done
+            slot_order_emails[ordernumber] = canva_email
+            
             # Create button for admin to mark as done
             admin_inline_kb = types.InlineKeyboardMarkup()
             admin_inline_kb.add(types.InlineKeyboardButton(
@@ -797,15 +800,14 @@ def callback_query(call):
                 
                 bot.answer_callback_query(call.id, "✅ Đã đánh dấu hoàn thành!")
                 
-                # Extract email from admin message
-                canva_email = ""
-                try:
-                    import re
-                    email_match = re.search(r'Email Canva: `([^`]+)`', call.message.text)
-                    if email_match:
-                        canva_email = email_match.group(1)
-                except:
-                    pass
+                # Get email from saved dict
+                canva_email = slot_order_emails.get(int(ordernumber), "") or slot_order_emails.get(ordernumber, "")
+                
+                # Cleanup email from dict
+                if int(ordernumber) in slot_order_emails:
+                    del slot_order_emails[int(ordernumber)]
+                if ordernumber in slot_order_emails:
+                    del slot_order_emails[ordernumber]
                 
                 # Edit admin message
                 try:
@@ -1408,6 +1410,9 @@ assign_account_state = {}
 # State storage for slot order flow (waiting for email input)
 # Format: {user_id: {"quantity": int, "username": str}}
 pending_slot_email_state = {}
+
+# Store slot order emails for admin callback (ordernumber -> canva_email)
+slot_order_emails = {}
 
 # Check if message matches assign account button
 def is_assign_account_button(text):
