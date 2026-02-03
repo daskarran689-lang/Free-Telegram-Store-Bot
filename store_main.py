@@ -2717,7 +2717,7 @@ def process_upgrade_canva_order(user_id, username, warranty_type, lang):
             "product_name": product_name,
             "price": price,
             "quantity": 1,
-            "product_number": "UPGRADE",
+            "product_number": 0,  # 0 = UPGRADE product
             "orderdate": orderdate,
             "download_link": "",
             "transfer_content": transfer_content,
@@ -2852,7 +2852,7 @@ def process_slot_order(user_id, username, quantity, lang, canva_email):
             "product_name": product_name,
             "price": total_price,
             "quantity": quantity,
-            "product_number": "SLOT",
+            "product_number": -1,  # -1 = SLOT product
             "orderdate": orderdate,
             "download_link": "",
             "transfer_content": transfer_content,
