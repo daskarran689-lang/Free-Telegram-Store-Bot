@@ -626,15 +626,37 @@ class GetDataFromDB:
             return None
     
     @staticmethod
+    def GetOrderIDs_Buyer(buyer_id):
+        """Get all order IDs for a specific buyer"""
+        try:
+            result = supabase.table(TABLE_ORDERS).select('ordernumber').eq('buyerid', buyer_id).order('ordernumber', ascending=False).execute()
+            return [(r['ordernumber'],) for r in result.data] if result.data else []
+        except Exception as e:
+            logger.error(f"Error getting buyer orders: {e}")
+            return []
+    
+    @staticmethod
     def GetOrderDetails(ordernumber):
-        """Get order details"""
+        """Get order details - returns list of tuples for iteration"""
         try:
             result = supabase.table(TABLE_ORDERS).select('*').eq('ordernumber', ordernumber).execute()
             if result.data:
                 r = result.data[0]
-                return (r['ordernumber'], r['buyerid'], r['buyerusername'], r['productname'],
-                       r['productprice'], r['paidmethod'], r['productdownloadlink'], r['productkeys'],
-                       r['buyercomment'], r['productnumber'])
+                # Return list of tuples matching expected format:
+                # (buyerid, buyerusername, productname, productprice, orderdate, paidmethod, productdownloadlink, productkeys, buyercomment, ordernumber, productnumber)
+                return [(
+                    r['buyerid'], 
+                    r['buyerusername'], 
+                    r['productname'],
+                    r['productprice'], 
+                    r.get('orderdate', ''),  # orderdate
+                    r['paidmethod'], 
+                    r.get('productdownloadlink', ''), 
+                    r.get('productkeys', 'NIL'),
+                    r.get('buyercomment', ''), 
+                    r['ordernumber'], 
+                    r.get('productnumber', '')
+                )]
             return None
         except:
             return None
