@@ -390,15 +390,11 @@ def payos_webhook():
                 logger.error(f"PayOS: Error sending upgrade buyer message: {e}")
                 bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
             
-            # Send success photo
+            # Update reply keyboard (no success photo for upgrade - customer already has account)
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
             nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
             nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
-            success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
-            try:
-                bot.send_photo(user_id, success_photo, reply_markup=nav_keyboard)
-            except:
-                pass
+            bot.send_message(user_id, "👆 Vui lòng inbox Admin theo hướng dẫn trên.", reply_markup=nav_keyboard)
             
             # Edit admin notification for UPGRADE
             admin_msg = f"✅ *Đơn UP LẠI CANVA đã thanh toán!*\n"
@@ -468,15 +464,11 @@ def payos_webhook():
                 logger.error(f"PayOS: Error sending slot buyer message: {e}")
                 bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
             
-            # Send success photo
+            # Update reply keyboard (no success photo for slot - customer already has account)
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
             nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
             nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
-            success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
-            try:
-                bot.send_photo(user_id, success_photo, reply_markup=nav_keyboard)
-            except:
-                pass
+            update_reply_keyboard(user_id, nav_keyboard)
             
             # Edit admin notification for SLOT with button
             admin_msg = f"✅ *Đơn SLOT CANVA đã thanh toán!*\n"
