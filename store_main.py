@@ -336,6 +336,7 @@ def payos_webhook():
         product_number = order_info["product_number"]
         orderdate = order_info["orderdate"]
         is_upgrade = order_info.get("is_upgrade", False)  # Check if this is an upgrade order
+        is_slot = order_info.get("is_slot", False)  # Check if this is a slot order
         
         # Get user language
         lang = get_user_lang(user_id)
@@ -433,7 +434,93 @@ def payos_webhook():
             logger.info(f"PayOS: Upgrade order {ordernumber} confirmed!")
             return "ok", 200
         
-        # === NORMAL ORDER (not upgrade) - assign new accounts ===
+        # === SLOT ORDER - notify admin with email, wait for manual processing ===
+        if is_slot:
+            canva_email = order_info.get("canva_email", "")
+            
+            # Save order to database (no product keys for slot)
+            CreateDatas.AddOrder(
+                ordernumber, user_id, username, product_name, price, product_number, 
+                payment_id=str(webhook_data.get("paymentLinkId", "")),
+                paidmethod='PayOS'
+            )
+            
+            try:
+                price_num = int(float(str(price).replace(',', '')))
+            except:
+                price_num = price
+            
+            # Send success message for SLOT order
+            buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
+            buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
+            buyer_msg += f"📦 Gói: *{product_name}*\n"
+            buyer_msg += f"📧 Email Canva: `{canva_email}`\n"
+            buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"📤 *Đã gửi yêu cầu đến Admin!*\n"
+            buyer_msg += f"⏳ Vui lòng đợi xử lý, khi Admin xử lý xong bot sẽ thông báo ngay cho bạn."
+            
+            try:
+                bot.send_message(user_id, buyer_msg, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"PayOS: Error sending slot buyer message: {e}")
+                bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
+            
+            # Send success photo
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+            nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+            success_photo = "AgACAgUAAxkBAAIJdmlCtvFxgG3ksInklXuWO6qHRp2gAAIFDWsbgmUQVtmHfJzHPW42AQADAgADeQADNgQ"
+            try:
+                bot.send_photo(user_id, success_photo, reply_markup=nav_keyboard)
+            except:
+                pass
+            
+            # Edit admin notification for SLOT with button
+            admin_msg = f"✅ *Đơn SLOT CANVA đã thanh toán!*\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+            admin_msg += f"👤 Khách: @{username} (ID: `{user_id}`)\n"
+            admin_msg += f"📦 Sản phẩm: {product_name}\n"
+            admin_msg += f"📧 Email Canva: `{canva_email}`\n"
+            admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"⏳ *Chờ xử lý thêm slot cho khách*"
+            
+            # Create button for admin to mark as done
+            admin_inline_kb = types.InlineKeyboardMarkup()
+            admin_inline_kb.add(types.InlineKeyboardButton(
+                text="✅ Đã xử lý xong",
+                callback_data=f"slot_done_{ordernumber}_{user_id}"
+            ))
+            
+            if ordernumber in pending_admin_messages:
+                for msg_info in pending_admin_messages[ordernumber]:
+                    try:
+                        bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown", reply_markup=admin_inline_kb)
+                    except:
+                        pass
+                del pending_admin_messages[ordernumber]
+            else:
+                admins = GetDataFromDB.GetAdminIDsInDB() or []
+                for admin in admins:
+                    try:
+                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown", reply_markup=admin_inline_kb)
+                    except:
+                        pass
+            
+            # Cleanup
+            if ordernumber in pending_orders_info:
+                del pending_orders_info[ordernumber]
+            if ordernumber in pending_order_quantities:
+                del pending_order_quantities[ordernumber]
+            
+            logger.info(f"PayOS: Slot order {ordernumber} confirmed!")
+            return "ok", 200
+        
+        # === NORMAL ORDER (not upgrade, not slot) - assign new accounts ===
         # Get Canva accounts
         canva_accounts = CanvaAccountDB.get_available_accounts(quantity)
         
@@ -645,6 +732,76 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "Đang xử lý...")
             show_upgrade_product_details(user_id, lang, call.message.chat.id, call.message.message_id)
             return
+        elif call.data == "product_slot":
+            # Handle Slot Canva Edu product selection - ask email directly
+            bot.answer_callback_query(call.id, "Vui lòng nhập email Canva...")
+            # Set username in state before calling show_slot_product_details
+            pending_slot_email_state[user_id] = {
+                "quantity": 1,
+                "username": call.from_user.username or "user"
+            }
+            show_slot_product_details(user_id, lang, call.message.chat.id, call.message.message_id)
+            return
+        elif call.data == "cancel_slot_email":
+            # Cancel slot email input
+            if user_id in pending_slot_email_state:
+                del pending_slot_email_state[user_id]
+            bot.answer_callback_query(call.id, "Đã hủy!")
+            # Go back to products menu
+            inline_kb = types.InlineKeyboardMarkup(row_width=1)
+            inline_kb.row(types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva"))
+            inline_kb.row(types.InlineKeyboardButton(text="🎫 Slot Canva Edu", callback_data="product_slot"))
+            if upgrade_product_enabled:
+                inline_kb.row(types.InlineKeyboardButton(text="♻️ Up lại Canva Edu", callback_data="product_upgrade"))
+            try:
+                bot.edit_message_text("👇 Chọn sản phẩm:", call.message.chat.id, call.message.message_id, reply_markup=inline_kb)
+            except:
+                bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
+            return
+        elif call.data.startswith("slot_done_"):
+            # Admin marks slot order as done
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            # Parse: slot_done_{ordernumber}_{buyer_user_id}
+            parts = call.data.replace("slot_done_", "").split("_")
+            if len(parts) >= 2:
+                ordernumber = parts[0]
+                buyer_user_id = int(parts[1])
+                
+                bot.answer_callback_query(call.id, "✅ Đã đánh dấu hoàn thành!")
+                
+                # Extract email from admin message
+                canva_email = ""
+                try:
+                    import re
+                    email_match = re.search(r'Email Canva: `([^`]+)`', call.message.text)
+                    if email_match:
+                        canva_email = email_match.group(1)
+                except:
+                    pass
+                
+                # Edit admin message
+                try:
+                    new_msg = call.message.text.replace("⏳ *Chờ xử lý thêm slot cho khách*", "✅ *ĐÃ XỬ LÝ XONG*")
+                    bot.edit_message_text(new_msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+                except:
+                    pass
+                
+                # Notify buyer with email
+                buyer_msg = f"🎉 *THÔNG BÁO TỪ ADMIN*\n"
+                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                buyer_msg += f"✅ Đơn hàng `{ordernumber}` đã được xử lý xong!\n\n"
+                buyer_msg += f"🎫 Slot email: `{canva_email}` đã được gửi lời mời vào đội.\n"
+                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                buyer_msg += f"Cảm ơn bạn đã sử dụng dịch vụ! 💚"
+                
+                try:
+                    bot.send_message(buyer_user_id, buyer_msg, parse_mode="Markdown")
+                except Exception as e:
+                    logger.error(f"Error notifying buyer about slot done: {e}")
+            return
         elif call.data.startswith("buy_qty_"):
             # Handle inline buy quantity button (with warranty type)
             parts = call.data.replace('buy_qty_', '').split('_')
@@ -738,6 +895,9 @@ def callback_query(call):
             inline_kb.row(
                 types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
             )
+            inline_kb.row(
+                types.InlineKeyboardButton(text="🎫 Slot Canva Edu", callback_data="product_slot")
+            )
             # Only show upgrade product if enabled
             if upgrade_product_enabled:
                 inline_kb.row(
@@ -749,13 +909,12 @@ def callback_query(call):
                 bot.send_message(user_id, "👇 Chọn sản phẩm:", reply_markup=inline_kb)
             # Update reply keyboard
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(
+                types.KeyboardButton(text="🛍 Canva Edu Admin"),
+                types.KeyboardButton(text="🎫 Slot Canva Edu")
+            )
             if upgrade_product_enabled:
-                nav_keyboard.row(
-                    types.KeyboardButton(text="🛍 Canva Edu Admin"),
-                    types.KeyboardButton(text="♻️ Up lại Canva Edu")
-                )
-            else:
-                nav_keyboard.row(types.KeyboardButton(text="🛍 Canva Edu Admin"))
+                nav_keyboard.row(types.KeyboardButton(text="♻️ Up lại Canva Edu"))
             nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
             update_reply_keyboard(user_id, nav_keyboard)
             return
@@ -1220,6 +1379,10 @@ def toggle_upgrade_product(message):
 
 # State storage for assign account flow
 assign_account_state = {}
+
+# State storage for slot order flow (waiting for email input)
+# Format: {user_id: {"quantity": int, "username": str}}
+pending_slot_email_state = {}
 
 # Check if message matches assign account button
 def is_assign_account_button(text):
@@ -2257,13 +2420,17 @@ def is_warranty_button(text):
 def is_upgrade_button(text):
     return text == "♻️ Up lại Canva Edu"
 
+# Check if message is slot canva button
+def is_slot_button(text):
+    return text == "🎫 Slot Canva Edu"
+
 # Check if message is upgrade warranty button (for Up lại Canva Edu)
 def is_upgrade_warranty_button(text):
-    return text in ["🛡 BH 3 tháng - 120K", "⚡ KBH - 50K"]
+    return text in ["🛡 BH 3 tháng - 250K", "⚡ KBH - 100K"]
 
 # Check if message is product selection button (from /buy menu)
 def is_product_selection_button(text):
-    return text in ["🛍 Canva Edu Admin", "♻️ Up lại Canva Edu"]
+    return text in ["🛍 Canva Edu Admin", "♻️ Up lại Canva Edu", "🎫 Slot Canva Edu"]
 
 # Store reply keyboard message_id for each user to delete and resend
 # Format: {user_id: {"chat_id": chat_id, "message_id": message_id}}
@@ -2355,10 +2522,10 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     """Show Up lại Canva Edu product with warranty options"""
     inline_kb = types.InlineKeyboardMarkup(row_width=1)
     inline_kb.row(
-        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 120K", callback_data="upgrade_bh3")
+        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 250K", callback_data="upgrade_bh3")
     )
     inline_kb.row(
-        types.InlineKeyboardButton(text="⚡ KBH - 50K", callback_data="upgrade_kbh")
+        types.InlineKeyboardButton(text="⚡ KBH - 100K", callback_data="upgrade_kbh")
     )
     inline_kb.row(
         types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_products")
@@ -2368,8 +2535,8 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     msg += "━━━━━━━━━━━━━━\n"
     msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên đội nhóm/team</i>\n\n"
     msg += "💰 <b>Bảng giá:</b>\n"
-    msg += "• KBH: 50K\n"
-    msg += "• BH 3 tháng: 120K\n\n"
+    msg += "• KBH: 100K\n"
+    msg += "• BH 3 tháng: 250K\n\n"
     msg += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công, vui lòng inbox Admin:\n"
     msg += "• Mã đơn hàng\n"
     msg += "• Tài khoản Canva\n"
@@ -2389,9 +2556,42 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     # Update reply keyboard
     nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     nav_keyboard.row(
-        types.KeyboardButton(text="🛡 BH 3 tháng - 120K"),
-        types.KeyboardButton(text="⚡ KBH - 50K")
+        types.KeyboardButton(text="🛡 BH 3 tháng - 250K"),
+        types.KeyboardButton(text="⚡ KBH - 100K")
     )
+    nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
+    update_reply_keyboard(user_id, nav_keyboard)
+
+# Show Slot Canva Edu product details - ask for email directly
+def show_slot_product_details(user_id, lang, chat_id=None, message_id=None):
+    """Show Slot Canva Edu product and ask for email (1 slot = 5K)"""
+    # Save state waiting for email (default 1 slot)
+    pending_slot_email_state[user_id] = {
+        "quantity": 1,
+        "username": ""  # Will be filled when processing
+    }
+    
+    inline_kb = types.InlineKeyboardMarkup()
+    inline_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data="cancel_slot_email"))
+    
+    msg = "🎫 <b>SLOT CANVA EDU</b>\n"
+    msg += "━━━━━━━━━━━━━━\n"
+    msg += "<i>Thêm thành viên vào team Canva Edu</i>\n\n"
+    msg += "💰 <b>Giá:</b> 5,000 VND (KBH)\n\n"
+    msg += "📧 <b>Vui lòng gửi email tài khoản Canva cần thêm slot:</b>"
+    
+    # Edit inline message
+    if chat_id and message_id:
+        try:
+            bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+        except:
+            bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+    else:
+        bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+    
+    # Update reply keyboard
+    nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    nav_keyboard.add(types.KeyboardButton(text="❌ Hủy mua slot"))
     nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
     update_reply_keyboard(user_id, nav_keyboard)
 
@@ -2456,10 +2656,10 @@ def show_upgrade_canva_options(user_id, lang):
     """Show warranty options for 'Up lại Canva Edu' service"""
     inline_kb = types.InlineKeyboardMarkup(row_width=1)
     inline_kb.row(
-        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 120K", callback_data="upgrade_bh3")
+        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 250K", callback_data="upgrade_bh3")
     )
     inline_kb.row(
-        types.InlineKeyboardButton(text="⚡ KBH - 50K", callback_data="upgrade_kbh")
+        types.InlineKeyboardButton(text="⚡ KBH - 100K", callback_data="upgrade_kbh")
     )
     inline_kb.row(
         types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_warranty")
@@ -2469,8 +2669,8 @@ def show_upgrade_canva_options(user_id, lang):
     msg += "━━━━━━━━━━━━━━\n"
     msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên đội nhóm/team</i>\n\n"
     msg += "💰 <b>Bảng giá:</b>\n"
-    msg += "• KBH: 50K\n"
-    msg += "• BH 3 tháng: 120K\n\n"
+    msg += "• KBH: 100K\n"
+    msg += "• BH 3 tháng: 250K\n\n"
     msg += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công, vui lòng inbox Admin:\n"
     msg += "• Mã đơn hàng\n"
     msg += "• Tài khoản Canva\n"
@@ -2615,6 +2815,128 @@ def process_upgrade_canva_order(user_id, username, warranty_type, lang):
         logger.error(f"Error processing upgrade order: {e}")
         bot.send_message(user_id, f"❌ Lỗi: {e}", reply_markup=create_main_keyboard(lang, user_id))
 
+# Process slot order
+def process_slot_order(user_id, username, quantity, lang, canva_email):
+    """Process 'Slot Canva Edu' order with customer's Canva email"""
+    unit_price, total_price = calculate_slot_price(quantity)
+    product_name = f"Slot Canva Edu x{quantity}"
+    
+    # Get bank config
+    bank_cfg = get_bank_config()
+    if not bank_cfg["bank_code"] or not bank_cfg["account_number"]:
+        bot.send_message(user_id, get_text("bank_not_setup", lang), reply_markup=create_main_keyboard(lang, user_id))
+        return
+    
+    # Send loading photo first
+    loading_img = "https://files.catbox.moe/yicj8r.jpg"
+    try:
+        loading_msg = bot.send_photo(user_id, loading_img, caption="⏳ Đang xử lý...")
+    except Exception as e:
+        logger.warning(f"Failed to send loading photo: {e}")
+        loading_msg = bot.send_message(user_id, "⏳ Đang xử lý...")
+    
+    try:
+        ordernumber = random.randint(10000, 99999)
+        transfer_content = f"SLOT{ordernumber}"
+        
+        now = datetime.now(VN_TIMEZONE)
+        orderdate = now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Save to pending_orders_info with canva_email
+        pending_orders_info[ordernumber] = {
+            "user_id": user_id,
+            "username": username,
+            "product_name": product_name,
+            "price": total_price,
+            "quantity": quantity,
+            "product_number": "SLOT",
+            "orderdate": orderdate,
+            "download_link": "",
+            "transfer_content": transfer_content,
+            "is_slot": True,
+            "canva_email": canva_email
+        }
+        
+        # Notify admin about new pending order with email info
+        admins = GetDataFromDB.GetAdminIDsInDB() or []
+        admin_msg_ids = []
+        for admin in admins:
+            try:
+                admin_msg = f"🎫 *Đơn SLOT CANVA đang chờ thanh toán*\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{username}\n"
+                admin_msg += f"📦 Sản phẩm: {product_name}\n"
+                admin_msg += f"📧 Email Canva: `{canva_email}`\n"
+                admin_msg += f"💰 Số tiền: {total_price:,} VND\n"
+                admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
+                sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                admin_msg_ids.append({"chat_id": admin[0], "message_id": sent.message_id})
+            except:
+                pass
+        pending_admin_messages[ordernumber] = admin_msg_ids
+        
+        # Try PayOS first
+        payos_result = create_payos_payment_link(ordernumber, total_price, transfer_content, username)
+        
+        if payos_result and payos_result.get("accountNumber"):
+            checkout_url = payos_result.get("checkoutUrl", "")
+            payos_account = payos_result.get("accountNumber", "")
+            payos_name = payos_result.get("accountName", "")
+            payos_bin = payos_result.get("bin", "")
+            
+            import urllib.parse
+            qr_url = f"https://img.vietqr.io/image/{payos_bin}-{payos_account}-compact2.png"
+            params = {
+                "amount": int(total_price),
+                "addInfo": transfer_content,
+                "accountName": payos_name
+            }
+            qr_url = f"{qr_url}?{urllib.parse.urlencode(params)}"
+            
+            msg = f"📱 <b>QUÉT MÃ QR ĐỂ THANH TOÁN</b>\n\n"
+            msg += f"🏦 Ngân hàng: <b>MB Bank</b>\n"
+            msg += f"💳 Số TK: <code>{payos_account}</code>\n"
+            msg += f"👤 Chủ TK: <b>{payos_name}</b>\n"
+            msg += f"💰 Số tiền: <b>{total_price:,} VND</b>\n"
+            msg += f"📝 Nội dung: <code>{transfer_content}</code>\n\n"
+            msg += f"⏳ Mã đơn hàng: <code>{ordernumber}</code>\n"
+            msg += f"📧 Email Canva: <code>{canva_email}</code>"
+        else:
+            qr_url = generate_vietqr_url(
+                bank_cfg["bank_code"],
+                bank_cfg["account_number"],
+                bank_cfg["account_name"],
+                total_price,
+                transfer_content
+            )
+            msg = f"📱 <b>QUÉT MÃ QR ĐỂ THANH TOÁN</b>\n\n"
+            msg += f"🏦 Ngân hàng: <b>{bank_cfg['bank_code']}</b>\n"
+            msg += f"💳 Số TK: <code>{bank_cfg['account_number']}</code>\n"
+            msg += f"👤 Chủ TK: <b>{bank_cfg['account_name']}</b>\n"
+            msg += f"💰 Số tiền: <b>{total_price:,} VND</b>\n"
+            msg += f"📝 Nội dung: <code>{transfer_content}</code>\n\n"
+            msg += f"⏳ Mã đơn hàng: <code>{ordernumber}</code>\n"
+            msg += f"📧 Email Canva: <code>{canva_email}</code>"
+        
+        inline_kb = types.InlineKeyboardMarkup()
+        inline_kb.add(types.InlineKeyboardButton(
+            text=get_text("cancel_order", lang),
+            callback_data=f"cancel_order_{ordernumber}"
+        ))
+        
+        try:
+            media = types.InputMediaPhoto(qr_url, caption=msg, parse_mode='HTML')
+            bot.edit_message_media(media, chat_id=user_id, message_id=loading_msg.message_id, reply_markup=inline_kb)
+            pending_qr_messages[ordernumber] = {"chat_id": user_id, "message_id": loading_msg.message_id}
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            bot.send_photo(user_id, qr_url, caption=msg, reply_markup=inline_kb, parse_mode='HTML')
+            
+    except Exception as e:
+        logger.error(f"Error processing slot order: {e}")
+        bot.send_message(user_id, f"❌ Lỗi: {e}", reply_markup=create_main_keyboard(lang, user_id))
+
 # Handler for buy button with quantity
 @bot.message_handler(content_types=["text"], func=lambda message: is_buy_button(message.text))
 def handle_buy_with_quantity(message, warranty_type="kbh"):
@@ -2698,7 +3020,71 @@ def handle_upgrade_button(message):
     
     show_upgrade_canva_options(id, lang)
 
-# Handler for upgrade warranty button (BH 3 tháng - 120K / KBH - 50K)
+# Handler for slot canva button
+@bot.message_handler(content_types=["text"], func=lambda message: is_slot_button(message.text))
+def handle_slot_button(message):
+    """Handle slot canva button press - ask for email directly"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    # Check maintenance mode
+    if maintenance_mode and not is_admin(id):
+        send_maintenance_message(message)
+        return
+    
+    # Check rate limit
+    if not check_rate_limit(id):
+        return
+    
+    # Set username in state
+    pending_slot_email_state[id] = {
+        "quantity": 1,
+        "username": message.from_user.username or "user"
+    }
+    
+    show_slot_product_details(id, lang)
+
+# Check if user is in slot email input state
+def is_waiting_slot_email(user_id):
+    return user_id in pending_slot_email_state
+
+# Handler for slot email input
+@bot.message_handler(content_types=["text"], func=lambda message: is_waiting_slot_email(message.from_user.id))
+def handle_slot_email_input(message):
+    """Handle email input for slot order"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    # Check if user wants to cancel
+    if "Hủy" in message.text or message.text == "🏠 Trang chủ":
+        if id in pending_slot_email_state:
+            del pending_slot_email_state[id]
+        bot.send_message(id, "❌ Đã hủy mua slot!", reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    email = message.text.strip().lower()
+    
+    # Validate email
+    if '@' not in email or '.' not in email:
+        bot.send_message(id, "❌ Email không hợp lệ!\n\n📧 Vui lòng nhập lại email Canva:")
+        return
+    
+    # Get saved state
+    state = pending_slot_email_state.get(id)
+    if not state:
+        bot.send_message(id, "❌ Phiên đã hết hạn. Vui lòng thử lại!", reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    quantity = state["quantity"]
+    username = state["username"]
+    
+    # Clear state
+    del pending_slot_email_state[id]
+    
+    # Process order with email
+    process_slot_order(id, username, quantity, lang, email)
+
+# Handler for upgrade warranty button (BH 3 tháng - 250K / KBH - 100K)
 @bot.message_handler(content_types=["text"], func=lambda message: is_upgrade_warranty_button(message.text))
 def handle_upgrade_warranty_button(message):
     """Handle upgrade warranty button press from reply keyboard"""
@@ -2717,9 +3103,9 @@ def handle_upgrade_warranty_button(message):
         bot.send_message(id, "❌ *Sản phẩm này tạm thời không khả dụng!*\n\nVui lòng quay lại sau.", reply_markup=create_main_keyboard(lang, id), parse_mode='Markdown')
         return
     
-    if message.text == "🛡 BH 3 tháng - 120K":
+    if message.text == "🛡 BH 3 tháng - 250K":
         process_upgrade_canva_order(id, username, "bh3", lang)
-    else:  # "⚡ KBH - 50K"
+    else:  # "⚡ KBH - 100K"
         process_upgrade_canva_order(id, username, "kbh", lang)
 
 # Handler for product selection button (from /buy menu)
@@ -2740,6 +3126,8 @@ def handle_product_selection_button(message):
     
     if message.text == "🛍 Canva Edu Admin":
         show_canva_product_details(id, lang)
+    elif message.text == "🎫 Slot Canva Edu":
+        show_slot_product_details(id, lang)
     else:  # "♻️ Up lại Canva Edu"
         # Check if upgrade product is enabled
         if not upgrade_product_enabled:
@@ -2780,6 +3168,9 @@ def shop_items_handler(message):
         inline_kb.row(
             types.InlineKeyboardButton(text="🛍 Canva Edu Admin", callback_data="product_canva")
         )
+        inline_kb.row(
+            types.InlineKeyboardButton(text="🎫 Slot Canva Edu", callback_data="product_slot")
+        )
         # Only show upgrade product if enabled
         if upgrade_product_enabled:
             inline_kb.row(
@@ -2788,13 +3179,12 @@ def shop_items_handler(message):
         
         # Reply keyboard với sản phẩm
         nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        nav_keyboard.row(
+            types.KeyboardButton(text="🛍 Canva Edu Admin"),
+            types.KeyboardButton(text="🎫 Slot Canva Edu")
+        )
         if upgrade_product_enabled:
-            nav_keyboard.row(
-                types.KeyboardButton(text="🛍 Canva Edu Admin"),
-                types.KeyboardButton(text="♻️ Up lại Canva Edu")
-            )
-        else:
-            nav_keyboard.row(types.KeyboardButton(text="🛍 Canva Edu Admin"))
+            nav_keyboard.row(types.KeyboardButton(text="♻️ Up lại Canva Edu"))
         nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
         
         # Gửi message với inline keyboard
@@ -3110,15 +3500,26 @@ def calculate_upgrade_price(warranty_type="kbh"):
     """Calculate price for 'Up lại Canva Edu Admin' service
     warranty_type: "bh3" (bảo hành 3 tháng) or "kbh" (không bảo hành)
     
-    KBH: 50,000 VND
-    BH 3 tháng: 120,000 VND
+    KBH: 100,000 VND
+    BH 3 tháng: 250,000 VND
     
     Returns: price
     """
     if warranty_type == "bh3":
-        return 120000
+        return 250000
     else:  # kbh
-        return 50000
+        return 100000
+
+
+def calculate_slot_price(quantity):
+    """Calculate price for 'Slot Canva Edu' service
+    Fixed price: 5,000 VND per slot (KBH only)
+    
+    Returns: (unit_price, total_price)
+    """
+    unit_price = 5000
+    total_price = unit_price * quantity
+    return unit_price, total_price
 
 
 def get_price_tier_text():
