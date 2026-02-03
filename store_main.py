@@ -3047,19 +3047,27 @@ def handle_slot_button(message):
     
     show_slot_product_details(id, lang)
 
-# Check if user is in slot email input state
-def is_waiting_slot_email(user_id):
-    return user_id in pending_slot_email_state
+# Check if user is in slot email input state (exclude special buttons)
+def is_waiting_slot_email(user_id, text=""):
+    if user_id not in pending_slot_email_state:
+        return False
+    # Allow special buttons to pass through to other handlers
+    special_buttons = ["🏠 Trang chủ", "🛍 Đơn hàng", "📞 Hỗ trợ"]
+    if text in special_buttons or text.startswith("/"):
+        # Clear state so user can use other features
+        del pending_slot_email_state[user_id]
+        return False
+    return True
 
 # Handler for slot email input
-@bot.message_handler(content_types=["text"], func=lambda message: is_waiting_slot_email(message.from_user.id))
+@bot.message_handler(content_types=["text"], func=lambda message: is_waiting_slot_email(message.from_user.id, message.text))
 def handle_slot_email_input(message):
     """Handle email input for slot order"""
     id = message.from_user.id
     lang = get_user_lang(id)
     
     # Check if user wants to cancel
-    if "Hủy" in message.text or message.text == "🏠 Trang chủ":
+    if "Hủy" in message.text:
         if id in pending_slot_email_state:
             del pending_slot_email_state[id]
         bot.send_message(id, "❌ Đã hủy mua slot!", reply_markup=create_main_keyboard(lang, id))
