@@ -211,8 +211,17 @@ def handle_cancel_slot(message):
     """Handle cancel slot purchase"""
     id = message.from_user.id
     lang = get_user_lang(id)
+    
+    # Delete the slot product message if exists
     if id in pending_slot_email_state:
+        msg_id = pending_slot_email_state[id].get("message_id")
+        if msg_id:
+            try:
+                bot.delete_message(id, msg_id)
+            except:
+                pass
         del pending_slot_email_state[id]
+    
     bot.send_message(id, "❌ Đã hủy mua slot!", reply_markup=create_main_keyboard(lang, id))
 
 # Hàm thông báo cho admin (NON-BLOCKING)
@@ -2581,12 +2590,6 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
 # Show Slot Canva Edu product details - ask for email directly
 def show_slot_product_details(user_id, lang, chat_id=None, message_id=None):
     """Show Slot Canva Edu product and ask for email (1 slot = 5K)"""
-    # Save state waiting for email (default 1 slot)
-    pending_slot_email_state[user_id] = {
-        "quantity": 1,
-        "username": ""  # Will be filled when processing
-    }
-    
     inline_kb = types.InlineKeyboardMarkup()
     inline_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data="cancel_slot_email"))
     
@@ -2596,14 +2599,25 @@ def show_slot_product_details(user_id, lang, chat_id=None, message_id=None):
     msg += "💰 <b>Giá:</b> 5,000 VND (KBH)\n\n"
     msg += "📧 <b>Vui lòng gửi email tài khoản Canva cần thêm slot:</b>"
     
-    # Edit inline message
+    # Edit inline message or send new one
+    sent_msg = None
     if chat_id and message_id:
         try:
             bot.edit_message_text(msg, chat_id, message_id, reply_markup=inline_kb, parse_mode='HTML')
+            sent_msg = message_id
         except:
-            bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+            result = bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+            sent_msg = result.message_id
     else:
-        bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+        result = bot.send_message(user_id, msg, reply_markup=inline_kb, parse_mode='HTML')
+        sent_msg = result.message_id
+    
+    # Save state waiting for email (default 1 slot) with message_id to delete later
+    pending_slot_email_state[user_id] = {
+        "quantity": 1,
+        "username": "",  # Will be filled when processing
+        "message_id": sent_msg
+    }
     
     # Update reply keyboard
     nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
