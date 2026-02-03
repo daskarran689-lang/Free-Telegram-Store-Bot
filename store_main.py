@@ -200,7 +200,20 @@ def create_cancel_keyboard():
 @bot.message_handler(content_types=["text"], func=lambda message: message.text == "❌ Hủy")
 def handle_cancel(message):
     """Handle cancel action - return to home"""
+    # Clear slot email state if exists
+    if message.from_user.id in pending_slot_email_state:
+        del pending_slot_email_state[message.from_user.id]
     send_welcome(message)
+
+# Handler for Cancel slot button
+@bot.message_handler(content_types=["text"], func=lambda message: "Hủy mua slot" in message.text)
+def handle_cancel_slot(message):
+    """Handle cancel slot purchase"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    if id in pending_slot_email_state:
+        del pending_slot_email_state[id]
+    bot.send_message(id, "❌ Đã hủy mua slot!", reply_markup=create_main_keyboard(lang, id))
 
 # Hàm thông báo cho admin (NON-BLOCKING)
 def notify_admin(action, display_name, user_id=None, extra=""):
@@ -3053,7 +3066,8 @@ def is_waiting_slot_email(user_id, text=""):
         return False
     # Allow special buttons to pass through to other handlers
     pass_through_buttons = ["🏠 Trang chủ", "🛍 Đơn hàng", "📞 Hỗ trợ"]
-    if text in pass_through_buttons or text.startswith("/"):
+    # Also allow cancel button
+    if text in pass_through_buttons or text.startswith("/") or "Hủy" in text:
         # Clear state so user can use other features
         del pending_slot_email_state[user_id]
         return False
