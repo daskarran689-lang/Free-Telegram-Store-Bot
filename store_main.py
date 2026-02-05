@@ -811,8 +811,8 @@ def callback_query(call):
                 
                 # Edit admin message
                 try:
-                    new_msg = call.message.text.replace("⏳ *Chờ xử lý thêm slot cho khách*", "✅ *ĐÃ XỬ LÝ XONG*")
-                    bot.edit_message_text(new_msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+                    new_msg = call.message.text.replace("⏳ Chờ xử lý thêm slot cho khách", "✅ ĐÃ XỬ LÝ XONG")
+                    bot.edit_message_text(new_msg, call.message.chat.id, call.message.message_id)
                 except:
                     pass
                 
