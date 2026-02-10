@@ -146,6 +146,62 @@ def set_upgrade_product_enabled(enabled: bool):
     upgrade_product_enabled = enabled
     return upgrade_product_enabled
 
+# ============== DYNAMIC PRICE CONFIGURATION ==============
+PRICE_CONFIG_FILE = "price_config.json"
+
+# Default prices
+DEFAULT_PRICE_CONFIG = {
+    "canva_bh3": {"tier1": 100000, "tier10": 50000, "tier50": 25000},
+    "canva_kbh": {"tier1": 40000, "tier10": 20000, "tier50": 10000},
+    "upgrade_bh3": 250000,
+    "upgrade_kbh": 100000,
+    "slot_price": 5000
+}
+
+def load_price_config():
+    """Load price config from JSON file, fallback to defaults"""
+    try:
+        if os.path.exists(PRICE_CONFIG_FILE):
+            with open(PRICE_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            # Merge with defaults to ensure all keys exist
+            merged = DEFAULT_PRICE_CONFIG.copy()
+            for key in merged:
+                if key in config:
+                    merged[key] = config[key]
+            return merged
+    except Exception as e:
+        logger.error(f"Failed to load price config: {e}")
+    return DEFAULT_PRICE_CONFIG.copy()
+
+def save_price_config(config):
+    """Save price config to JSON file"""
+    try:
+        with open(PRICE_CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        logger.info("Price config saved successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save price config: {e}")
+        return False
+
+# Load prices at startup
+price_config = load_price_config()
+
+def get_price_config():
+    """Get current price config"""
+    return price_config
+
+def update_price_config(key, value):
+    """Update a price config value and save"""
+    global price_config
+    price_config[key] = value
+    save_price_config(price_config)
+    return price_config
+
+# State for price editing flow
+pending_price_edit = {}
+
 def check_maintenance(user_id):
     """Check if user can access bot (returns True if allowed)"""
     if not maintenance_mode:
@@ -1402,6 +1458,234 @@ def toggle_upgrade_product(message):
     # Refresh Canva management menu
     manage_canva_accounts(message)
 
+# ============== ADMIN: ĐIỀU CHỈNH GIÁ ==============
+
+def format_price_vnd(price):
+    """Format price with K suffix"""
+    if price >= 1000:
+        if price % 1000 == 0:
+            return f"{price // 1000}K"
+        return f"{price:,}đ"
+    return f"{price:,}đ"
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "💰 Điều chỉnh giá")
+def show_price_management(message):
+    """Admin: Show price management menu"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    cfg = get_price_config()
+    
+    msg = "💰 <b>ĐIỀU CHỈNH GIÁ SẢN PHẨM CANVA</b>\n"
+    msg += "━━━━━━━━━━━━━━\n\n"
+    msg += "⚡ <b>1. Canva Edu Admin - BH 3 tháng:</b>\n"
+    msg += f"   • 1-9 acc: {format_price_vnd(cfg['canva_bh3']['tier1'])}\n"
+    msg += f"   • ≥10 acc: {format_price_vnd(cfg['canva_bh3']['tier10'])}\n"
+    msg += f"   • ≥50 acc: {format_price_vnd(cfg['canva_bh3']['tier50'])}\n\n"
+    msg += "⚡ <b>2. Canva Edu Admin - KBH:</b>\n"
+    msg += f"   • 1-9 acc: {format_price_vnd(cfg['canva_kbh']['tier1'])}\n"
+    msg += f"   • ≥10 acc: {format_price_vnd(cfg['canva_kbh']['tier10'])}\n"
+    msg += f"   • ≥50 acc: {format_price_vnd(cfg['canva_kbh']['tier50'])}\n\n"
+    msg += "♻️ <b>3. Up lại Canva Edu:</b>\n"
+    msg += f"   • KBH: {format_price_vnd(cfg['upgrade_kbh'])}\n"
+    msg += f"   • BH 3 tháng: {format_price_vnd(cfg['upgrade_bh3'])}\n\n"
+    msg += "🎫 <b>4. Slot Canva Edu:</b>\n"
+    msg += f"   • Giá/slot: {format_price_vnd(cfg['slot_price'])}\n\n"
+    msg += "👇 Chọn sản phẩm cần điều chỉnh giá:"
+    
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(types.KeyboardButton(text="📝 Sửa giá Canva BH3"))
+    keyboard.row(types.KeyboardButton(text="📝 Sửa giá Canva KBH"))
+    keyboard.row(types.KeyboardButton(text="📝 Sửa giá Up lại"))
+    keyboard.row(types.KeyboardButton(text="📝 Sửa giá Slot"))
+    keyboard.row(types.KeyboardButton(text="🔄 Khôi phục giá mặc định"))
+    keyboard.row(types.KeyboardButton(text="⬅️ Quay lại quản lý Canva"))
+    
+    bot.send_message(id, msg, reply_markup=keyboard, parse_mode='HTML')
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "⬅️ Quay lại quản lý Canva")
+def back_to_canva_management(message):
+    """Return to Canva management menu"""
+    manage_canva_accounts(message)
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "🔄 Khôi phục giá mặc định")
+def reset_default_prices(message):
+    """Admin: Reset all prices to default"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    global price_config
+    price_config = DEFAULT_PRICE_CONFIG.copy()
+    save_price_config(price_config)
+    bot.send_message(id, "✅ Đã khôi phục tất cả giá về mặc định!", parse_mode='HTML')
+    show_price_management(message)
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "📝 Sửa giá Canva BH3")
+def edit_price_canva_bh3(message):
+    """Admin: Edit Canva BH3 prices"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    cfg = get_price_config()
+    keyboard = create_cancel_keyboard()
+    msg = f"📝 <b>Sửa giá Canva Edu Admin - BH 3 tháng</b>\n\n"
+    msg += f"Giá hiện tại:\n"
+    msg += f"• 1-9 acc: {format_price_vnd(cfg['canva_bh3']['tier1'])}\n"
+    msg += f"• ≥10 acc: {format_price_vnd(cfg['canva_bh3']['tier10'])}\n"
+    msg += f"• ≥50 acc: {format_price_vnd(cfg['canva_bh3']['tier50'])}\n\n"
+    msg += "Nhập giá mới theo định dạng:\n<code>giá_1-9 giá_10+ giá_50+</code>\n\n"
+    msg += "Ví dụ: <code>100000 50000 25000</code>\n"
+    msg += "(đơn vị VND, cách nhau bởi dấu cách)"
+    sent = bot.send_message(id, msg, reply_markup=keyboard, parse_mode='HTML')
+    pending_price_edit[id] = "canva_bh3"
+    bot.register_next_step_handler(sent, process_price_edit)
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "📝 Sửa giá Canva KBH")
+def edit_price_canva_kbh(message):
+    """Admin: Edit Canva KBH prices"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    cfg = get_price_config()
+    keyboard = create_cancel_keyboard()
+    msg = f"📝 <b>Sửa giá Canva Edu Admin - KBH</b>\n\n"
+    msg += f"Giá hiện tại:\n"
+    msg += f"• 1-9 acc: {format_price_vnd(cfg['canva_kbh']['tier1'])}\n"
+    msg += f"• ≥10 acc: {format_price_vnd(cfg['canva_kbh']['tier10'])}\n"
+    msg += f"• ≥50 acc: {format_price_vnd(cfg['canva_kbh']['tier50'])}\n\n"
+    msg += "Nhập giá mới theo định dạng:\n<code>giá_1-9 giá_10+ giá_50+</code>\n\n"
+    msg += "Ví dụ: <code>40000 20000 10000</code>\n"
+    msg += "(đơn vị VND, cách nhau bởi dấu cách)"
+    sent = bot.send_message(id, msg, reply_markup=keyboard, parse_mode='HTML')
+    pending_price_edit[id] = "canva_kbh"
+    bot.register_next_step_handler(sent, process_price_edit)
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "📝 Sửa giá Up lại")
+def edit_price_upgrade(message):
+    """Admin: Edit upgrade prices"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    cfg = get_price_config()
+    keyboard = create_cancel_keyboard()
+    msg = f"📝 <b>Sửa giá Up lại Canva Edu</b>\n\n"
+    msg += f"Giá hiện tại:\n"
+    msg += f"• KBH: {format_price_vnd(cfg['upgrade_kbh'])}\n"
+    msg += f"• BH 3 tháng: {format_price_vnd(cfg['upgrade_bh3'])}\n\n"
+    msg += "Nhập giá mới theo định dạng:\n<code>giá_KBH giá_BH3</code>\n\n"
+    msg += "Ví dụ: <code>100000 250000</code>\n"
+    msg += "(đơn vị VND, cách nhau bởi dấu cách)"
+    sent = bot.send_message(id, msg, reply_markup=keyboard, parse_mode='HTML')
+    pending_price_edit[id] = "upgrade"
+    bot.register_next_step_handler(sent, process_price_edit)
+
+@bot.message_handler(content_types=["text"], func=lambda message: message.text == "📝 Sửa giá Slot")
+def edit_price_slot(message):
+    """Admin: Edit slot price"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    if not is_admin(id):
+        bot.send_message(id, get_text("admin_only", lang), reply_markup=create_main_keyboard(lang, id))
+        return
+    cfg = get_price_config()
+    keyboard = create_cancel_keyboard()
+    msg = f"📝 <b>Sửa giá Slot Canva Edu</b>\n\n"
+    msg += f"Giá hiện tại: {format_price_vnd(cfg['slot_price'])}/slot\n\n"
+    msg += "Nhập giá mới cho 1 slot:\n"
+    msg += "Ví dụ: <code>5000</code>\n"
+    msg += "(đơn vị VND)"
+    sent = bot.send_message(id, msg, reply_markup=keyboard, parse_mode='HTML')
+    pending_price_edit[id] = "slot"
+    bot.register_next_step_handler(sent, process_price_edit)
+
+def process_price_edit(message):
+    """Process price edit input from admin"""
+    id = message.from_user.id
+    lang = get_user_lang(id)
+    
+    if not is_admin(id):
+        return
+    
+    # Check cancel
+    if is_cancel_action(message.text):
+        if id in pending_price_edit:
+            del pending_price_edit[id]
+        show_price_management(message)
+        return
+    
+    edit_type = pending_price_edit.get(id)
+    if not edit_type:
+        bot.send_message(id, "❌ Phiên chỉnh sửa đã hết hạn.", reply_markup=create_main_keyboard(lang, id))
+        return
+    
+    try:
+        parts = message.text.strip().split()
+        cfg = get_price_config()
+        
+        if edit_type in ["canva_bh3", "canva_kbh"]:
+            if len(parts) != 3:
+                bot.send_message(id, "❌ Sai định dạng! Cần nhập 3 số cách nhau bởi dấu cách.\nVí dụ: <code>100000 50000 25000</code>", parse_mode='HTML')
+                if id in pending_price_edit:
+                    del pending_price_edit[id]
+                show_price_management(message)
+                return
+            tier1, tier10, tier50 = int(parts[0]), int(parts[1]), int(parts[2])
+            if tier1 <= 0 or tier10 <= 0 or tier50 <= 0:
+                raise ValueError("Giá phải lớn hơn 0")
+            update_price_config(edit_type, {"tier1": tier1, "tier10": tier10, "tier50": tier50})
+            label = "BH 3 tháng" if edit_type == "canva_bh3" else "KBH"
+            bot.send_message(id, f"✅ Đã cập nhật giá <b>Canva Edu Admin - {label}</b>:\n• 1-9 acc: {format_price_vnd(tier1)}\n• ≥10 acc: {format_price_vnd(tier10)}\n• ≥50 acc: {format_price_vnd(tier50)}", parse_mode='HTML')
+        
+        elif edit_type == "upgrade":
+            if len(parts) != 2:
+                bot.send_message(id, "❌ Sai định dạng! Cần nhập 2 số cách nhau bởi dấu cách.\nVí dụ: <code>100000 250000</code>", parse_mode='HTML')
+                if id in pending_price_edit:
+                    del pending_price_edit[id]
+                show_price_management(message)
+                return
+            kbh_price, bh3_price = int(parts[0]), int(parts[1])
+            if kbh_price <= 0 or bh3_price <= 0:
+                raise ValueError("Giá phải lớn hơn 0")
+            update_price_config("upgrade_kbh", kbh_price)
+            update_price_config("upgrade_bh3", bh3_price)
+            bot.send_message(id, f"✅ Đã cập nhật giá <b>Up lại Canva Edu</b>:\n• KBH: {format_price_vnd(kbh_price)}\n• BH 3 tháng: {format_price_vnd(bh3_price)}", parse_mode='HTML')
+        
+        elif edit_type == "slot":
+            if len(parts) != 1:
+                bot.send_message(id, "❌ Sai định dạng! Cần nhập 1 số.\nVí dụ: <code>5000</code>", parse_mode='HTML')
+                if id in pending_price_edit:
+                    del pending_price_edit[id]
+                show_price_management(message)
+                return
+            slot_price = int(parts[0])
+            if slot_price <= 0:
+                raise ValueError("Giá phải lớn hơn 0")
+            update_price_config("slot_price", slot_price)
+            bot.send_message(id, f"✅ Đã cập nhật giá <b>Slot Canva Edu</b>: {format_price_vnd(slot_price)}/slot", parse_mode='HTML')
+        
+    except ValueError as e:
+        bot.send_message(id, f"❌ Giá không hợp lệ: {str(e)}\nVui lòng nhập số nguyên dương.", parse_mode='HTML')
+    except Exception as e:
+        bot.send_message(id, f"❌ Lỗi: {str(e)}", parse_mode='HTML')
+    
+    if id in pending_price_edit:
+        del pending_price_edit[id]
+    show_price_management(message)
+
 # ============== ADMIN: GÁN TÀI KHOẢN CHO USER ==============
 
 # State storage for assign account flow
@@ -1810,6 +2094,7 @@ def manage_canva_accounts(message):
     keyboard.row(types.KeyboardButton(text="📋 Danh sách tài khoản"))
     keyboard.row(types.KeyboardButton(text="🗑 Xóa tài khoản Canva"))
     keyboard.row(types.KeyboardButton(text="📊 Thống kê tài khoản"))
+    keyboard.row(types.KeyboardButton(text="💰 Điều chỉnh giá"))
     # Upgrade product toggle button
     if upgrade_product_enabled:
         keyboard.row(types.KeyboardButton(text="🔴 TẮT bán Up lại (đang bật)"))
@@ -2523,9 +2808,12 @@ def show_canva_product_details(user_id, lang, chat_id=None, message_id=None):
         types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_products")
     )
     
+    cfg = get_price_config()
+    bh3 = cfg["canva_bh3"]
+    kbh = cfg["canva_kbh"]
     price_tiers = "💰 <b>Bảng giá:</b>\n"
-    price_tiers += "• KBH: 40K/1 | ≥10: 20K | ≥50: 10K\n"
-    price_tiers += "• BH 3 tháng: 100K/1 | ≥10: 50K | ≥50: 25K"
+    price_tiers += f"• KBH: {format_price_vnd(kbh['tier1'])}/1 | ≥10: {format_price_vnd(kbh['tier10'])} | ≥50: {format_price_vnd(kbh['tier50'])}\n"
+    price_tiers += f"• BH 3 tháng: {format_price_vnd(bh3['tier1'])}/1 | ≥10: {format_price_vnd(bh3['tier10'])} | ≥50: {format_price_vnd(bh3['tier50'])}"
     
     msg = f"🛍 <b>CANVA EDU ADMIN</b>\n\n📦 Còn: {canva_stock} tài khoản\n\n{price_tiers}\n\n👇 Chọn loại bảo hành:"
     
@@ -2550,12 +2838,16 @@ def show_canva_product_details(user_id, lang, chat_id=None, message_id=None):
 # Show Up lại Canva Edu product details
 def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     """Show Up lại Canva Edu product with warranty options"""
+    cfg = get_price_config()
+    upgrade_kbh_price = format_price_vnd(cfg['upgrade_kbh'])
+    upgrade_bh3_price = format_price_vnd(cfg['upgrade_bh3'])
+    
     inline_kb = types.InlineKeyboardMarkup(row_width=1)
     inline_kb.row(
-        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 250K", callback_data="upgrade_bh3")
+        types.InlineKeyboardButton(text=f"🛡 BH 3 tháng - {upgrade_bh3_price}", callback_data="upgrade_bh3")
     )
     inline_kb.row(
-        types.InlineKeyboardButton(text="⚡ KBH - 100K", callback_data="upgrade_kbh")
+        types.InlineKeyboardButton(text=f"⚡ KBH - {upgrade_kbh_price}", callback_data="upgrade_kbh")
     )
     inline_kb.row(
         types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_products")
@@ -2565,8 +2857,8 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     msg += "━━━━━━━━━━━━━━\n"
     msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên đội nhóm/team</i>\n\n"
     msg += "💰 <b>Bảng giá:</b>\n"
-    msg += "• KBH: 100K\n"
-    msg += "• BH 3 tháng: 250K\n\n"
+    msg += f"• KBH: {upgrade_kbh_price}\n"
+    msg += f"• BH 3 tháng: {upgrade_bh3_price}\n\n"
     msg += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công, vui lòng inbox Admin:\n"
     msg += "• Mã đơn hàng\n"
     msg += "• Tài khoản Canva\n"
@@ -2586,8 +2878,8 @@ def show_upgrade_product_details(user_id, lang, chat_id=None, message_id=None):
     # Update reply keyboard
     nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     nav_keyboard.row(
-        types.KeyboardButton(text="🛡 BH 3 tháng - 250K"),
-        types.KeyboardButton(text="⚡ KBH - 100K")
+        types.KeyboardButton(text=f"🛡 BH 3 tháng - {upgrade_bh3_price}"),
+        types.KeyboardButton(text=f"⚡ KBH - {upgrade_kbh_price}")
     )
     nav_keyboard.add(types.KeyboardButton(text="🏠 Trang chủ"))
     update_reply_keyboard(user_id, nav_keyboard)
@@ -2598,10 +2890,12 @@ def show_slot_product_details(user_id, lang, chat_id=None, message_id=None):
     inline_kb = types.InlineKeyboardMarkup()
     inline_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data="cancel_slot_email"))
     
+    cfg = get_price_config()
+    slot_p = format_price_vnd(cfg['slot_price'])
     msg = "🎫 <b>SLOT CANVA EDU</b>\n"
     msg += "━━━━━━━━━━━━━━\n"
     msg += "<i>Thêm thành viên vào team Canva Edu</i>\n\n"
-    msg += "💰 <b>Giá:</b> 5,000 VND (KBH)\n\n"
+    msg += f"💰 <b>Giá:</b> {slot_p} (KBH)\n\n"
     msg += "📧 <b>Vui lòng gửi email tài khoản Canva cần thêm slot:</b>"
     
     # Edit inline message or send new one
@@ -2656,11 +2950,14 @@ def show_quantity_selection(user_id, warranty_type, lang, chat_id=None, message_
         types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_canva")
     )
     
-    # Get price info for this warranty type
+    # Get price info for this warranty type (dynamic)
+    cfg = get_price_config()
     if warranty_type == "bh3":
-        price_info = "💰 Bảng giá BH 3 tháng:\n• 1-9 acc: 100K/acc\n• ≥10 acc: 50K/acc\n• ≥50 acc: 25K/acc"
+        t = cfg["canva_bh3"]
+        price_info = f"💰 Bảng giá BH 3 tháng:\n• 1-9 acc: {format_price_vnd(t['tier1'])}/acc\n• ≥10 acc: {format_price_vnd(t['tier10'])}/acc\n• ≥50 acc: {format_price_vnd(t['tier50'])}/acc"
     else:
-        price_info = "💰 Bảng giá KBH:\n• 1-9 acc: 40K/acc\n• ≥10 acc: 20K/acc\n• ≥50 acc: 10K/acc"
+        t = cfg["canva_kbh"]
+        price_info = f"💰 Bảng giá KBH:\n• 1-9 acc: {format_price_vnd(t['tier1'])}/acc\n• ≥10 acc: {format_price_vnd(t['tier10'])}/acc\n• ≥50 acc: {format_price_vnd(t['tier50'])}/acc"
     
     msg = f"🛡 <b>Đã chọn: {warranty_label}</b>\n\n{price_info}\n\n👇 Chọn số lượng muốn mua:"
     
@@ -2689,12 +2986,16 @@ def show_quantity_selection(user_id, warranty_type, lang, chat_id=None, message_
 # Show upgrade canva options
 def show_upgrade_canva_options(user_id, lang):
     """Show warranty options for 'Up lại Canva Edu' service"""
+    cfg = get_price_config()
+    upgrade_kbh_price = format_price_vnd(cfg['upgrade_kbh'])
+    upgrade_bh3_price = format_price_vnd(cfg['upgrade_bh3'])
+    
     inline_kb = types.InlineKeyboardMarkup(row_width=1)
     inline_kb.row(
-        types.InlineKeyboardButton(text="🛡 BH 3 tháng - 250K", callback_data="upgrade_bh3")
+        types.InlineKeyboardButton(text=f"🛡 BH 3 tháng - {upgrade_bh3_price}", callback_data="upgrade_bh3")
     )
     inline_kb.row(
-        types.InlineKeyboardButton(text="⚡ KBH - 100K", callback_data="upgrade_kbh")
+        types.InlineKeyboardButton(text=f"⚡ KBH - {upgrade_kbh_price}", callback_data="upgrade_kbh")
     )
     inline_kb.row(
         types.InlineKeyboardButton(text="⬅️ Quay lại", callback_data="back_to_warranty")
@@ -2704,8 +3005,8 @@ def show_upgrade_canva_options(user_id, lang):
     msg += "━━━━━━━━━━━━━━\n"
     msg += "<i>Dành cho tài khoản bị mất gói - giữ nguyên đội nhóm/team</i>\n\n"
     msg += "💰 <b>Bảng giá:</b>\n"
-    msg += "• KBH: 100K\n"
-    msg += "• BH 3 tháng: 250K\n\n"
+    msg += f"• KBH: {upgrade_kbh_price}\n"
+    msg += f"• BH 3 tháng: {upgrade_bh3_price}\n\n"
     msg += "📝 <b>Lưu ý:</b> Sau khi thanh toán thành công, vui lòng inbox Admin:\n"
     msg += "• Mã đơn hàng\n"
     msg += "• Tài khoản Canva\n"
@@ -3500,41 +3801,26 @@ def parse_price(price_str):
         return 0
 
 
-# Pricing tiers based on quantity and warranty type
-# BH 3 tháng: 100K/1 | ≥10: 50K | ≥50: 25K
-# KBH (không bảo hành): 40K/1 | ≥10: 20K | ≥50: 10K
-# Up lại Canva Edu Admin: KBH 50K | BH 3 tháng 120K
+# Pricing tiers - uses dynamic price config from price_config.json
+# Admin can adjust prices via "💰 Điều chỉnh giá" menu
 
 def calculate_price_by_quantity(quantity, warranty_type="kbh"):
     """Calculate unit price based on quantity tiers and warranty type
     warranty_type: "bh3" (bảo hành 3 tháng) or "kbh" (không bảo hành)
-    
-    BH 3 tháng:
-    - Default: 100,000 VND per item
-    - ≥10 items: 50,000 VND per item
-    - ≥50 items: 25,000 VND per item
-    
-    KBH (không bảo hành):
-    - Default: 40,000 VND per item
-    - ≥10 items: 20,000 VND per item
-    - ≥50 items: 10,000 VND per item
+    Uses dynamic price config.
     
     Returns: (unit_price, total_price)
     """
-    if warranty_type == "bh3":
-        if quantity >= 50:
-            unit_price = 25000
-        elif quantity >= 10:
-            unit_price = 50000
-        else:
-            unit_price = 100000
-    else:  # kbh - không bảo hành
-        if quantity >= 50:
-            unit_price = 10000
-        elif quantity >= 10:
-            unit_price = 20000
-        else:
-            unit_price = 40000
+    cfg = get_price_config()
+    tier_key = "canva_bh3" if warranty_type == "bh3" else "canva_kbh"
+    tiers = cfg[tier_key]
+    
+    if quantity >= 50:
+        unit_price = tiers["tier50"]
+    elif quantity >= 10:
+        unit_price = tiers["tier10"]
+    else:
+        unit_price = tiers["tier1"]
     
     total_price = unit_price * quantity
     return unit_price, total_price
@@ -3542,49 +3828,51 @@ def calculate_price_by_quantity(quantity, warranty_type="kbh"):
 
 def calculate_upgrade_price(warranty_type="kbh"):
     """Calculate price for 'Up lại Canva Edu Admin' service
-    warranty_type: "bh3" (bảo hành 3 tháng) or "kbh" (không bảo hành)
-    
-    KBH: 100,000 VND
-    BH 3 tháng: 250,000 VND
+    Uses dynamic price config.
     
     Returns: price
     """
+    cfg = get_price_config()
     if warranty_type == "bh3":
-        return 250000
+        return cfg["upgrade_bh3"]
     else:  # kbh
-        return 100000
+        return cfg["upgrade_kbh"]
 
 
 def calculate_slot_price(quantity):
     """Calculate price for 'Slot Canva Edu' service
-    Fixed price: 5,000 VND per slot (KBH only)
+    Uses dynamic price config.
     
     Returns: (unit_price, total_price)
     """
-    unit_price = 5000
+    cfg = get_price_config()
+    unit_price = cfg["slot_price"]
     total_price = unit_price * quantity
     return unit_price, total_price
 
 
 def get_price_tier_text():
-    """Get price tier description for display"""
+    """Get price tier description for display - uses dynamic prices"""
+    cfg = get_price_config()
+    bh3 = cfg["canva_bh3"]
+    kbh = cfg["canva_kbh"]
     text = "⚡ <b>CANVA EDU ADMIN</b> ⚡\n"
     text += "🎓 Full quyền 500 slot – hạn 3 năm\n\n"
     text += "💰 <b>Bảng giá:</b>\n"
     text += "━━━━━━━━━━━━━━\n"
     text += "🛡 <b>BH 3 tháng:</b>\n"
-    text += "• 1-9 acc: 100K/acc\n"
-    text += "• ≥10 acc: 50K/acc\n"
-    text += "• ≥50 acc: 25K/acc\n\n"
+    text += f"• 1-9 acc: {format_price_vnd(bh3['tier1'])}/acc\n"
+    text += f"• ≥10 acc: {format_price_vnd(bh3['tier10'])}/acc\n"
+    text += f"• ≥50 acc: {format_price_vnd(bh3['tier50'])}/acc\n\n"
     text += "⚡ <b>KBH (Không bảo hành):</b>\n"
-    text += "• 1-9 acc: 40K/acc\n"
-    text += "• ≥10 acc: 20K/acc\n"
-    text += "• ≥50 acc: 10K/acc\n"
+    text += f"• 1-9 acc: {format_price_vnd(kbh['tier1'])}/acc\n"
+    text += f"• ≥10 acc: {format_price_vnd(kbh['tier10'])}/acc\n"
+    text += f"• ≥50 acc: {format_price_vnd(kbh['tier50'])}/acc\n"
     text += "━━━━━━━━━━━━━━\n"
     text += "♻️ <b>UP LẠI CANVA EDU</b>\n"
     text += "<i>(bị mất gói - giữ nguyên đội nhóm/team)</i>\n"
-    text += "• KBH: 50K\n"
-    text += "• BH 3 tháng: 120K"
+    text += f"• KBH: {format_price_vnd(cfg['upgrade_kbh'])}\n"
+    text += f"• BH 3 tháng: {format_price_vnd(cfg['upgrade_bh3'])}"
     return text
 
 
