@@ -184,18 +184,18 @@ PRICE_CONFIG_FILE = "price_config.json"
 
 # Default prices
 DEFAULT_PRICE_CONFIG = {
-    "canva_bh3": {"tier1": 100000, "tier10": 50000, "tier50": 25000},
+    "canva_bh3": {"tier1": 199000, "tier10": 159000, "tier50": 109000},
     "canva_kbh": {"tier1": 40000, "tier10": 20000, "tier50": 10000},
     "upgrade_bh3": 250000,
     "upgrade_kbh": 100000,
-    "slot_price": 5000,
-    "new_product_price": 99000,
-    "new_product_name": "Sản phẩm mới",
+    "slot_price": 15000,
+    "new_product_price": 35000,
+    "new_product_name": "Slot Youtube Premium",
     "new_product_packages": {
         "1m": {"name": "1 Tháng", "price": 35000},
-        "3m": {"name": "3 Tháng", "price": 90000},
-        "6m": {"name": "6 Tháng", "price": 160000},
-        "1y": {"name": "1 Năm", "price": 290000}
+        "3m": {"name": "3 Tháng", "price": 99000},
+        "6m": {"name": "6 Tháng", "price": 179000},
+        "1y": {"name": "1 Năm", "price": 249000}
     }
 }
 
@@ -839,7 +839,7 @@ def payos_webhook():
         admin_inline_kb = types.InlineKeyboardMarkup()
         admin_inline_kb.add(types.InlineKeyboardButton(
             text="✅ Đã giao hàng xong",
-            callback_data=f"canva_done_{ordernumber}_{user_id}"
+            callback_data=f"canva_done_{ordernumber}_{user_id}_{warranty_type}"
         ))
         
         if ordernumber in pending_admin_messages:
@@ -1071,11 +1071,12 @@ def callback_query(call):
                 bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
                 return
             
-            # Parse: canva_done_{ordernumber}_{buyer_user_id}
+            # Parse: canva_done_{ordernumber}_{buyer_user_id}_{warranty_type}
             parts = call.data.replace("canva_done_", "").split("_")
             if len(parts) >= 2:
                 ordernumber = parts[0]
                 buyer_user_id = int(parts[1])
+                warranty_type = parts[2] if len(parts) > 2 else "kbh"
                 
                 bot.answer_callback_query(call.id, "Nhập thông tin tài khoản để giao cho khách...")
                 
@@ -1086,7 +1087,8 @@ def callback_query(call):
                     "admin_msg_chat_id": call.message.chat.id,
                     "admin_msg_id": call.message.message_id,
                     "step": "account",
-                    "account_details": ""
+                    "account_details": "",
+                    "warranty_type": warranty_type
                 }
                 
                 # Prompt admin to input account details
@@ -4290,6 +4292,7 @@ def _complete_canva_delivery(admin_id, delivery_info):
     account_details = delivery_info["account_details"]
     otp_link = delivery_info.get("otp_link")
     otp_email = delivery_info.get("otp_email")
+    warranty_type = delivery_info.get("warranty_type", "kbh")
     
     # Build buyer message
     buyer_msg = f"🎉 *THÔNG BÁO TỪ ADMIN*\n"
@@ -4307,7 +4310,12 @@ def _complete_canva_delivery(admin_id, delivery_info):
     elif otp_link:
         buyer_msg += f"🔑 Lấy mã xác thực tại: {otp_link}\n"
     
-    buyer_msg += f"⚠️ Vui lòng đổi mật khẩu ngay sau khi nhận!\n"
+    # KBH: yêu cầu đổi mật khẩu VÀ thay đổi email tài khoản
+    # BH3T: chỉ yêu cầu đổi mật khẩu
+    if warranty_type == "kbh":
+        buyer_msg += f"⚠️ Vui lòng đổi mật khẩu và thay đổi email tài khoản ngay sau khi nhận!\n"
+    else:
+        buyer_msg += f"⚠️ Vui lòng đổi mật khẩu ngay sau khi nhận!\n"
     buyer_msg += f"Cảm ơn bạn đã sử dụng dịch vụ! 💚"
     
     try:

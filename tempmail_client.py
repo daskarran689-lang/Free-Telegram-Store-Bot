@@ -421,12 +421,12 @@ Attachments: {len(email.get('attachments', []))}
 class EmailWorkerClient:
     """
     Client for Email Worker API v6 with Durable Objects
-    Domains: dlndaii.indevs.in, dlndaiiii.indevs.in, dlndaiii.indevs.in
+    Domains: dlndai.indevs.in, dlndaii.indevs.in, dlndaiiii.indevs.in, dlndaiii.indevs.in
     Features: Real-time wait, warmup, instant delivery
     """
     
     WORKER_URL = "https://email-receiver.daidinh9875.workers.dev"
-    EMAIL_DOMAINS = ['dlndaii.indevs.in', 'dlndaiiii.indevs.in', 'dlndaiii.indevs.in']
+    EMAIL_DOMAINS = ['dlndai.indevs.in', 'dlndaii.indevs.in', 'dlndaiiii.indevs.in', 'dlndaiii.indevs.in']
     EMAIL_DOMAIN = 'dlndaiiii.indevs.in'  # Default domain
     
     def __init__(self, domain: Optional[str] = None):
