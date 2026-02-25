@@ -34,7 +34,7 @@ LANGUAGES = {
         
         # Messages - Welcome
         "welcome_admin": "👋 *Welcome Admin!*\n━━━━━━━━━━━━━━\nReady to manage your store",
-        "welcome_customer": "👋 *Hello* {username}!\nWelcome to\n━━━━━━━━━━━━━━\n🎨 *CANVA EDU ADMIN SHOP*\n━━━━━━━━━━━━━━\n\n💳 Buy automatically 24/7\n📦 View order history easily\n💬 Support: @dlndai\n\n📖 Type /help to see commands\n👇 Or press button below to start",
+        "welcome_customer": "👋 *Hello* {username}!\nWelcome to\n━━━━━━━━━━━━━━\n🏪 *DLNDAI SHOP*\n━━━━━━━━━━━━━━\n\n💳 Buy automatically 24/7\n📦 View order history easily\n💬 Support: @dlndai\n\n📖 Type /help to see commands\n👇 Or press button below to start",
         "wallet_balance": "Your Wallet Balance: $",
         
         # Statistics
@@ -202,7 +202,7 @@ LANGUAGES = {
         
         # Messages - Welcome
         "welcome_admin": "👋 *Xin chào Admin!*\n━━━━━━━━━━━━━━\nSẵn sàng quản lý cửa hàng",
-        "welcome_customer": "👋 *Xin chào* {username}!\nChào mừng đến với\n━━━━━━━━━━━━━━\n🎨 *CANVA EDU ADMIN SHOP*\n━━━━━━━━━━━━━━\n\n💳 Mua hàng tự động 24/7\n📦 Xem lịch sử đơn dễ dàng\n💬 Hỗ trợ: @dlndai\n\n📖 Gõ /help để xem các lệnh của bot\n👇 Hoặc bấm nút bên dưới để bắt đầu",
+        "welcome_customer": "👋 *Xin chào* {username}!\nChào mừng đến với\n━━━━━━━━━━━━━━\n🏪 *DLNDAI SHOP*\n━━━━━━━━━━━━━━\n\n💳 Mua hàng tự động 24/7\n📦 Xem lịch sử đơn dễ dàng\n💬 Hỗ trợ: @dlndai\n\n📖 Gõ /help để xem các lệnh của bot\n👇 Hoặc bấm nút bên dưới để bắt đầu",
         "wallet_balance": "Số dư ví: $",
         
         # Statistics

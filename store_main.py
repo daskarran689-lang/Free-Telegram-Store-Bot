@@ -758,7 +758,7 @@ def payos_webhook():
             logger.info(f"PayOS: Custom order {ordernumber} confirmed!")
             return "ok", 200
         
-        # === NORMAL ORDER (Canva Edu Admin) - manual fulfillment by admin ===
+        # === NORMAL ORDER (Canva Edu Admin) - auto or manual fulfillment ===
         warranty_type = order_info.get("warranty_type", "kbh")
         warranty_label = "BH 3 tháng" if warranty_type == "bh3" else "KBH"
         
@@ -793,69 +793,158 @@ def payos_webhook():
                 promo_msg += f"🎯 Suất khuyến mãi: slot {slot_display}\n"
                 promo_msg += f"📩 Inbox Admin kèm mã đơn `{ordernumber}` để được tặng thêm {promo_bonus} tài khoản!"
         
-        # Send success message to buyer (manual delivery)
+        # Check if we have available accounts in stock for AUTO delivery
+        available_accounts = CanvaAccountDB.get_available_accounts(quantity)
+        
         try:
             price_num = int(float(str(price).replace(',', '')))
         except:
             price_num = price
         
-        buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
-        buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-        buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
-        buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
-        buyer_msg += f"📦 Sản phẩm: *{product_name}*\n"
-        buyer_msg += f"🛡 Loại: *{warranty_label}*\n"
-        buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
-        buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-        buyer_msg += f"📤 *Đã gửi yêu cầu đến Admin!*\n"
-        buyer_msg += f"⏳ Vui lòng đợi xử lý, khi Admin xử lý xong bot sẽ thông báo ngay cho bạn."
-        buyer_msg += promo_msg
-        
-        try:
-            bot.send_message(user_id, buyer_msg, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"PayOS: Error sending buyer message: {e}")
-            bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
-        
-        # Update reply keyboard
-        nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
-        nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
-        update_reply_keyboard(user_id, nav_keyboard)
-        
-        # Edit admin notification with "Done" button
-        admin_msg = f"✅ *Đơn CANVA EDU ADMIN đã thanh toán!*\n"
-        admin_msg += f"━━━━━━━━━━━━━━\n"
-        admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-        admin_msg += f"👤 Khách: @{username} (ID: `{user_id}`)\n"
-        admin_msg += f"📦 Sản phẩm: {product_name}\n"
-        admin_msg += f"🛡 Loại: {warranty_label}\n"
-        admin_msg += f"📦 Số lượng: {quantity}\n"
-        admin_msg += f"💰 Số tiền: {amount:,} VND\n"
-        admin_msg += f"━━━━━━━━━━━━━━\n"
-        admin_msg += f"⏳ *Chờ admin giao tài khoản cho khách*"
-        
-        # Create button for admin to mark as done
-        admin_inline_kb = types.InlineKeyboardMarkup()
-        admin_inline_kb.add(types.InlineKeyboardButton(
-            text="✅ Đã giao hàng xong",
-            callback_data=f"canva_done_{ordernumber}_{user_id}_{warranty_type}"
-        ))
-        
-        if ordernumber in pending_admin_messages:
-            for msg_info in pending_admin_messages[ordernumber]:
-                try:
-                    bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown", reply_markup=admin_inline_kb)
-                except:
-                    pass
-            del pending_admin_messages[ordernumber]
+        if available_accounts and len(available_accounts) >= quantity:
+            # === AUTO DELIVERY - We have stock ===
+            logger.info(f"PayOS: Auto-delivering {quantity} accounts for order {ordernumber}")
+            
+            # Assign accounts to buyer
+            assigned_accounts = []
+            for account in available_accounts[:quantity]:
+                account_id = account[0]
+                email = account[1]
+                authkey = account[2]
+                
+                # Assign to buyer
+                CanvaAccountDB.assign_account_to_buyer(account_id, user_id, ordernumber)
+                assigned_accounts.append({"email": email, "authkey": authkey})
+            
+            # Build account details message
+            accounts_text = ""
+            for i, acc in enumerate(assigned_accounts, 1):
+                accounts_text += f"\n*Tài khoản {i}:*\n"
+                accounts_text += f"📧 Email: `{acc['email']}`\n"
+                accounts_text += f"🔑 Authkey: `{acc['authkey']}`\n"
+            
+            # Send success message with accounts
+            buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
+            buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
+            buyer_msg += f"📦 Sản phẩm: *{product_name}*\n"
+            buyer_msg += f"🛡 Loại: *{warranty_label}*\n"
+            buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"🎁 *TÀI KHOẢN CỦA BẠN:*"
+            buyer_msg += accounts_text
+            buyer_msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"📖 *HƯỚNG DẪN SỬ DỤNG:*\n"
+            buyer_msg += f"1. Truy cập: https://www.canva.com\n"
+            buyer_msg += f"2. Đăng nhập bằng email trên\n"
+            buyer_msg += f"3. Sử dụng Authkey khi cần\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"💬 Hỗ trợ: @dlndai"
+            buyer_msg += promo_msg
+            
+            try:
+                bot.send_message(user_id, buyer_msg, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"PayOS: Error sending auto-delivery message: {e}")
+                bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
+            
+            # Update reply keyboard
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+            nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+            update_reply_keyboard(user_id, nav_keyboard)
+            
+            # Notify admin about auto-delivery
+            admin_msg = f"✅ *Đơn CANVA EDU ADMIN đã giao tự động!*\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+            admin_msg += f"👤 Khách: @{username} (ID: `{user_id}`)\n"
+            admin_msg += f"📦 Sản phẩm: {product_name}\n"
+            admin_msg += f"🛡 Loại: {warranty_label}\n"
+            admin_msg += f"📦 Số lượng: {quantity}\n"
+            admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"🤖 *Đã giao tự động từ kho*"
+            
+            if ordernumber in pending_admin_messages:
+                for msg_info in pending_admin_messages[ordernumber]:
+                    try:
+                        bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown")
+                    except:
+                        pass
+                del pending_admin_messages[ordernumber]
+            else:
+                admins = GetDataFromDB.GetAdminIDsInDB() or []
+                for admin in admins:
+                    try:
+                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                    except:
+                        pass
+            
+            logger.info(f"PayOS: Order {ordernumber} auto-delivered successfully!")
+            
         else:
-            admins = GetDataFromDB.GetAdminIDsInDB() or []
-            for admin in admins:
-                try:
-                    bot.send_message(admin[0], admin_msg, parse_mode="Markdown", reply_markup=admin_inline_kb)
-                except:
-                    pass
+            # === MANUAL DELIVERY - No stock available ===
+            logger.info(f"PayOS: Manual delivery needed for order {ordernumber} (stock: {len(available_accounts) if available_accounts else 0}/{quantity})")
+            
+            buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
+            buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
+            buyer_msg += f"📦 Sản phẩm: *{product_name}*\n"
+            buyer_msg += f"🛡 Loại: *{warranty_label}*\n"
+            buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            buyer_msg += f"📤 *Đã gửi yêu cầu đến Admin!*\n"
+            buyer_msg += f"⏳ Vui lòng đợi xử lý, khi Admin xử lý xong bot sẽ thông báo ngay cho bạn."
+            buyer_msg += promo_msg
+            
+            try:
+                bot.send_message(user_id, buyer_msg, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"PayOS: Error sending buyer message: {e}")
+                bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
+            
+            # Update reply keyboard
+            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+            nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
+            update_reply_keyboard(user_id, nav_keyboard)
+            
+            # Edit admin notification with "Done" button
+            admin_msg = f"✅ *Đơn CANVA EDU ADMIN đã thanh toán!*\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+            admin_msg += f"👤 Khách: @{username} (ID: `{user_id}`)\n"
+            admin_msg += f"📦 Sản phẩm: {product_name}\n"
+            admin_msg += f"🛡 Loại: {warranty_label}\n"
+            admin_msg += f"📦 Số lượng: {quantity}\n"
+            admin_msg += f"💰 Số tiền: {amount:,} VND\n"
+            admin_msg += f"━━━━━━━━━━━━━━\n"
+            admin_msg += f"⚠️ *Hết hàng trong kho - cần giao thủ công!*"
+            
+            # Create button for admin to mark as done
+            admin_inline_kb = types.InlineKeyboardMarkup()
+            admin_inline_kb.add(types.InlineKeyboardButton(
+                text="✅ Đã giao hàng xong",
+                callback_data=f"canva_done_{ordernumber}_{user_id}_{warranty_type}"
+            ))
+            
+            if ordernumber in pending_admin_messages:
+                for msg_info in pending_admin_messages[ordernumber]:
+                    try:
+                        bot.edit_message_text(admin_msg, msg_info["chat_id"], msg_info["message_id"], parse_mode="Markdown", reply_markup=admin_inline_kb)
+                    except:
+                        pass
+                del pending_admin_messages[ordernumber]
+            else:
+                admins = GetDataFromDB.GetAdminIDsInDB() or []
+                for admin in admins:
+                    try:
+                        bot.send_message(admin[0], admin_msg, parse_mode="Markdown", reply_markup=admin_inline_kb)
+                    except:
+                        pass
         
         # Cleanup
         if ordernumber in pending_orders_info:
@@ -863,7 +952,7 @@ def payos_webhook():
         if ordernumber in pending_order_quantities:
             del pending_order_quantities[ordernumber]
         
-        logger.info(f"PayOS: Order {ordernumber} confirmed (manual fulfillment)!")
+        logger.info(f"PayOS: Order {ordernumber} confirmed!")
         return "ok", 200
         
     except Exception as e:
@@ -1754,7 +1843,7 @@ def send_welcome(message):
             safe_display = display_name.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
             welcome_msg = promo_banner + get_text("welcome_customer", lang).replace("{username}", safe_display)
             # Send welcome with photo (using Telegram file_id for speed)
-            welcome_photo = "AgACAgUAAxkBAAIJDGlCseCl8GNEMppfwlYCUDLvfr1LAAMNaxuCZRBWIvBQc4pixGQBAAMCAAN3AAM2BA"
+            welcome_photo = "AgACAgUAAxkBAAI5FWmfIdRcVGHee4LazuOplHyEBFpEAAIVDWsb-0IAAVV3t9lc4ydhRAEAAwIAA3gAAzoE"
             try:
                 bot.send_photo(message.chat.id, photo=welcome_photo, caption=welcome_msg, reply_markup=create_main_keyboard(lang, id), parse_mode="Markdown")
             except Exception as e:
