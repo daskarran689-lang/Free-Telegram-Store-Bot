@@ -730,7 +730,7 @@ def payos_webhook():
             # Create button for admin to mark as done
             admin_inline_kb = types.InlineKeyboardMarkup()
             admin_inline_kb.add(types.InlineKeyboardButton(
-                text="✅ Đã giao hàng xong",
+                text="📦 Giao hàng thủ công",
                 callback_data=f"newprod_done_{ordernumber}_{user_id}"
             ))
 
@@ -942,7 +942,7 @@ def payos_webhook():
             # Create button for admin to mark as done
             admin_inline_kb = types.InlineKeyboardMarkup()
             admin_inline_kb.add(types.InlineKeyboardButton(
-                text="✅ Đã giao hàng xong",
+                text="📦 Giao hàng thủ công",
                 callback_data=f"canva_done_{ordernumber}_{user_id}_{warranty_type}"
             ))
             
@@ -1038,6 +1038,32 @@ def callback_query(call):
                 return
             
             ordernumber = int(call.data.replace("confirm_payment_", ""))
+            
+            # Show confirmation button (2-step confirmation to avoid mistakes)
+            bot.answer_callback_query(call.id, "⚠️ Vui lòng xác nhận lại!")
+            
+            confirm_msg = f"⚠️ *XÁC NHẬN GIAO HÀNG*\n"
+            confirm_msg += f"━━━━━━━━━━━━━━\n"
+            confirm_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+            confirm_msg += f"━━━━━━━━━━━━━━\n"
+            confirm_msg += f"Bạn có chắc đã nhận được tiền và muốn giao hàng cho đơn này không?"
+            
+            confirm_kb = types.InlineKeyboardMarkup()
+            confirm_kb.row(
+                types.InlineKeyboardButton(text="✅ Chắc chắn - Giao hàng", callback_data=f"confirm_payment_final_{ordernumber}"),
+                types.InlineKeyboardButton(text="❌ Hủy", callback_data=f"cancel_confirm_{ordernumber}")
+            )
+            
+            bot.edit_message_text(confirm_msg, call.message.chat.id, call.message.message_id, reply_markup=confirm_kb, parse_mode="Markdown")
+            return
+        
+        # Handle final confirmation
+        if call.data.startswith("confirm_payment_final_"):
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            ordernumber = int(call.data.replace("confirm_payment_final_", ""))
             bot.answer_callback_query(call.id, "Đang xử lý giao hàng...")
             
             # Get order info from pending_orders_info
@@ -1162,7 +1188,7 @@ def callback_query(call):
                 
                 manual_kb = types.InlineKeyboardMarkup()
                 manual_kb.add(types.InlineKeyboardButton(
-                    text="✅ Đã giao hàng xong",
+                    text="📦 Giao hàng thủ công",
                     callback_data=f"canva_done_{ordernumber}_{buyer_id}_{warranty_type}"
                 ))
                 
@@ -1182,6 +1208,46 @@ def callback_query(call):
                 del pending_orders_info[ordernumber]
             if ordernumber in pending_order_quantities:
                 del pending_order_quantities[ordernumber]
+            
+            return
+        
+        # Handle cancel confirmation
+        if call.data.startswith("cancel_confirm_"):
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            ordernumber = int(call.data.replace("cancel_confirm_", ""))
+            bot.answer_callback_query(call.id, "Đã hủy xác nhận")
+            
+            # Get order info to restore original message
+            if ordernumber in pending_orders_info:
+                order_info = pending_orders_info[ordernumber]
+                username = order_info["username"]
+                buyer_id = order_info["user_id"]
+                product_name = order_info["product_name"]
+                price = order_info["price"]
+                warranty_type = order_info.get("warranty_type", "kbh")
+                
+                # Restore original admin message
+                admin_msg = f"🛒 *Đơn hàng mới đang chờ thanh toán*\n"
+                admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{username} (ID: `{buyer_id}`)\n"
+                admin_msg += f"📦 Sản phẩm: {product_name}\n"
+                admin_msg += f"🛡 Loại: {'BH 3 tháng' if warranty_type == 'bh3' else 'Không bảo hành'}\n"
+                admin_msg += f"💰 Số tiền: {price:,} VND\n"
+                admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
+                
+                admin_inline_kb = types.InlineKeyboardMarkup()
+                admin_inline_kb.add(types.InlineKeyboardButton(
+                    text="✅ Đã nhận tiền - Giao hàng",
+                    callback_data=f"confirm_payment_{ordernumber}"
+                ))
+                
+                bot.edit_message_text(admin_msg, call.message.chat.id, call.message.message_id, reply_markup=admin_inline_kb, parse_mode="Markdown")
+            else:
+                bot.edit_message_text("❌ Không tìm thấy thông tin đơn hàng", call.message.chat.id, call.message.message_id)
             
             return
         
