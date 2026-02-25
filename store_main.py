@@ -1031,6 +1031,160 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "⏳ Thao tác quá nhanh, vui lòng chờ...")
             return
         
+        # Handle admin confirm payment (VietQR manual confirmation)
+        if call.data.startswith("confirm_payment_"):
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            ordernumber = int(call.data.replace("confirm_payment_", ""))
+            bot.answer_callback_query(call.id, "Đang xử lý giao hàng...")
+            
+            # Get order info from pending_orders_info
+            if ordernumber not in pending_orders_info:
+                bot.answer_callback_query(call.id, "❌ Không tìm thấy đơn hàng!", show_alert=True)
+                return
+            
+            order_info = pending_orders_info[ordernumber]
+            buyer_id = order_info["user_id"]
+            username = order_info["username"]
+            product_name = order_info["product_name"]
+            price = order_info["price"]
+            quantity = order_info["quantity"]
+            product_number = order_info["product_number"]
+            orderdate = order_info["orderdate"]
+            warranty_type = order_info.get("warranty_type", "kbh")
+            warranty_label = "BH 3 tháng" if warranty_type == "bh3" else "KBH"
+            
+            # Save order to database
+            CreateDatas.AddOrder(
+                ordernumber, buyer_id, username, product_name, price, product_number,
+                payment_id="MANUAL_CONFIRM",
+                paidmethod='VietQR'
+            )
+            
+            # Check if we have stock for auto delivery
+            available_accounts = CanvaAccountDB.get_available_accounts(quantity)
+            
+            try:
+                price_num = int(float(str(price).replace(',', '')))
+            except:
+                price_num = price
+            
+            if available_accounts and len(available_accounts) >= quantity:
+                # AUTO DELIVERY
+                assigned_accounts = []
+                for account in available_accounts[:quantity]:
+                    account_id = account[0]
+                    email = account[1]
+                    authkey = account[2]
+                    CanvaAccountDB.assign_account_to_buyer(account_id, buyer_id, ordernumber)
+                    assigned_accounts.append({"email": email, "authkey": authkey})
+                
+                # Build message
+                accounts_text = ""
+                otp_buttons = []
+                for i, acc in enumerate(assigned_accounts, 1):
+                    accounts_text += f"\n🔑 *Tài khoản Canva:*\n"
+                    accounts_text += f"{acc['email']}\n"
+                    if acc.get('authkey'):
+                        accounts_text += f"🔐 Mật khẩu: `{acc['authkey']}`\n"
+                    otp_buttons.append(types.InlineKeyboardButton(
+                        text=f"🔑 Lấy OTP: {acc['email'][:20]}...",
+                        callback_data=f"otp_{acc['email']}"
+                    ))
+                
+                buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
+                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
+                buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
+                buyer_msg += f"📦 Gói: *{product_name}*\n"
+                buyer_msg += f"🛡 Loại: *{warranty_label}*\n"
+                buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
+                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━"
+                buyer_msg += accounts_text
+                buyer_msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                buyer_msg += f"👇 _Bấm nút bên dưới để lấy mã xác thực cho email (dùng cho việc đăng nhập, đổi mail, v.v...)_"
+                
+                inline_kb = types.InlineKeyboardMarkup(row_width=1)
+                for btn in otp_buttons:
+                    inline_kb.add(btn)
+                
+                canva_guide_photo = "AgACAgUAAxkBAAI6TGmfKrHzbmZvjWhQN7pWcxe8fhozAAIwDWsb-0IAAVWVJ0OvdBs9pgEAAwIAA3kAAzoE"
+                
+                try:
+                    bot.send_photo(buyer_id, photo=canva_guide_photo, caption=buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                except:
+                    try:
+                        bot.send_message(buyer_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                    except:
+                        bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
+                
+                # Update admin message
+                admin_msg = f"✅ *Đơn đã giao tự động!*\n"
+                admin_msg += f"━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{username} (ID: `{buyer_id}`)\n"
+                admin_msg += f"📦 Sản phẩm: {product_name}\n"
+                admin_msg += f"💰 Số tiền: {price_num:,} VND\n"
+                admin_msg += f"━━━━━━━━━━━━━━\n"
+                admin_msg += f"🤖 *Đã giao tự động từ kho*"
+                
+                bot.edit_message_text(admin_msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+                
+            else:
+                # MANUAL DELIVERY - notify admin
+                buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
+                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
+                buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
+                buyer_msg += f"📦 Gói: *{product_name}*\n"
+                buyer_msg += f"🛡 Loại: *{warranty_label}*\n"
+                buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
+                buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+                buyer_msg += f"📤 *Đã gửi yêu cầu đến Admin!*\n"
+                buyer_msg += f"⏳ Vui lòng đợi xử lý, khi Admin xử lý xong bot sẽ thông báo ngay cho bạn."
+                
+                try:
+                    bot.send_message(buyer_id, buyer_msg, parse_mode="Markdown")
+                except:
+                    bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
+                
+                # Update admin message
+                admin_msg = f"✅ *Đã xác nhận thanh toán!*\n"
+                admin_msg += f"━━━━━━━━━━━━━━\n"
+                admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+                admin_msg += f"👤 Khách: @{username} (ID: `{buyer_id}`)\n"
+                admin_msg += f"📦 Sản phẩm: {product_name}\n"
+                admin_msg += f"💰 Số tiền: {price_num:,} VND\n"
+                admin_msg += f"━━━━━━━━━━━━━━\n"
+                admin_msg += f"⚠️ *Hết hàng - cần giao thủ công!*"
+                
+                manual_kb = types.InlineKeyboardMarkup()
+                manual_kb.add(types.InlineKeyboardButton(
+                    text="✅ Đã giao hàng xong",
+                    callback_data=f"canva_done_{ordernumber}_{buyer_id}_{warranty_type}"
+                ))
+                
+                bot.edit_message_text(admin_msg, call.message.chat.id, call.message.message_id, reply_markup=manual_kb, parse_mode="Markdown")
+            
+            # Delete QR message
+            if ordernumber in pending_qr_messages:
+                try:
+                    msg_info = pending_qr_messages[ordernumber]
+                    bot.delete_message(msg_info["chat_id"], msg_info["message_id"])
+                except:
+                    pass
+                del pending_qr_messages[ordernumber]
+            
+            # Cleanup
+            if ordernumber in pending_orders_info:
+                del pending_orders_info[ordernumber]
+            if ordernumber in pending_order_quantities:
+                del pending_order_quantities[ordernumber]
+            
+            return
+        
         if call.data.startswith("otp_"):
             # Handle inline OTP button with specific email
             email = call.data.replace("otp_", "")
@@ -5101,12 +5255,20 @@ def process_bank_transfer_order(user_id, username, order_info, lang, quantity=1,
                 admin_msg = f"🛒 *Đơn hàng mới đang chờ thanh toán*\n"
                 admin_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-                admin_msg += f"👤 Khách: @{username}\n"
+                admin_msg += f"👤 Khách: @{username} (ID: `{user_id}`)\n"
                 admin_msg += f"📦 Sản phẩm: {product_name_with_qty}\n"
                 admin_msg += f"🛡 Loại: {'BH 3 tháng' if warranty_type == 'bh3' else 'Không bảo hành'}\n"
                 admin_msg += f"💰 Số tiền: {amount:,} VND\n"
                 admin_msg += f"⏳ Trạng thái: _Chờ chuyển khoản_"
-                sent = bot.send_message(admin[0], admin_msg, parse_mode="Markdown")
+                
+                # Add button for admin to confirm payment manually (for VietQR)
+                admin_inline_kb = types.InlineKeyboardMarkup()
+                admin_inline_kb.add(types.InlineKeyboardButton(
+                    text="✅ Đã nhận tiền - Giao hàng",
+                    callback_data=f"confirm_payment_{ordernumber}"
+                ))
+                
+                sent = bot.send_message(admin[0], admin_msg, reply_markup=admin_inline_kb, parse_mode="Markdown")
                 admin_msg_ids.append({"chat_id": admin[0], "message_id": sent.message_id})
             except:
                 pass
