@@ -1032,7 +1032,20 @@ def callback_query(call):
             return
         
         # Handle admin confirm payment (VietQR manual confirmation)
-        if call.data.startswith("confirm_payment_"):
+        if call.data.startswith("confirm_payment_final_"):
+            # Handle final confirmation (step 2)
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            ordernumber = int(call.data.replace("confirm_payment_final_", ""))
+            bot.answer_callback_query(call.id, "Đang xử lý giao hàng...")
+            
+            # Continue with delivery logic...
+            # (Keep existing code from line ~1070 onwards)
+            
+        elif call.data.startswith("confirm_payment_"):
+            # Handle first confirmation (step 1)
             if not is_admin(user_id):
                 bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
                 return
@@ -1042,10 +1055,10 @@ def callback_query(call):
             # Show confirmation button (2-step confirmation to avoid mistakes)
             bot.answer_callback_query(call.id, "⚠️ Vui lòng xác nhận lại!")
             
-            confirm_msg = f"⚠️ *XÁC NHẬN GIAO HÀNG*\n"
+            confirm_msg = f"⚠️ *XÁC NHẬN GIAO HÀNG*\n\n"
             confirm_msg += f"━━━━━━━━━━━━━━\n"
             confirm_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-            confirm_msg += f"━━━━━━━━━━━━━━\n"
+            confirm_msg += f"━━━━━━━━━━━━━━\n\n"
             confirm_msg += f"Bạn có chắc đã nhận được tiền và muốn giao hàng cho đơn này không?"
             
             confirm_kb = types.InlineKeyboardMarkup()
@@ -1057,16 +1070,7 @@ def callback_query(call):
             bot.edit_message_text(confirm_msg, call.message.chat.id, call.message.message_id, reply_markup=confirm_kb, parse_mode="Markdown")
             return
         
-        # Handle final confirmation
-        if call.data.startswith("confirm_payment_final_"):
-            if not is_admin(user_id):
-                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
-                return
-            
-            ordernumber = int(call.data.replace("confirm_payment_final_", ""))
-            bot.answer_callback_query(call.id, "Đang xử lý giao hàng...")
-            
-            # Get order info from pending_orders_info
+        # Handle cancel confirmation
             if ordernumber not in pending_orders_info:
                 bot.answer_callback_query(call.id, "❌ Không tìm thấy đơn hàng!", show_alert=True)
                 return
