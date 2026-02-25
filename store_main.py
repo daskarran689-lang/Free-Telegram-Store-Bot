@@ -810,7 +810,7 @@ def payos_webhook():
             for account in available_accounts[:quantity]:
                 account_id = account[0]
                 email = account[1]
-                authkey = account[2]
+                authkey = account[2] if account[2] else "dlndaicanvaedu"
                 
                 # Assign to buyer
                 CanvaAccountDB.assign_account_to_buyer(account_id, user_id, ordernumber)
@@ -821,9 +821,8 @@ def payos_webhook():
             otp_buttons = []
             for i, acc in enumerate(assigned_accounts, 1):
                 accounts_text += f"\n🔑 *Tài khoản Canva:*\n"
-                accounts_text += f"{acc['email']}\n"
-                if acc.get('authkey'):
-                    accounts_text += f"🔐 Mật khẩu: `{acc['authkey']}`\n"
+                accounts_text += f"`{acc['email']}`\n"
+                accounts_text += f"🔐 *Mật khẩu:* `{acc['authkey']}`\n"
                 
                 # Add OTP button for each account
                 otp_buttons.append(types.InlineKeyboardButton(
@@ -850,25 +849,27 @@ def payos_webhook():
             for btn in otp_buttons:
                 inline_kb.add(btn)
             
-            # Send with photo (Canva Edu guide)
-            canva_guide_photo = "AgACAgUAAxkBAAI6TGmfKrHzbmZvjWhQN7pWcxe8fhozAAIwDWsb-0IAAVWVJ0OvdBs9pgEAAwIAA3kAAzoE"
-            
+            # Send text message with inline buttons first
             try:
-                bot.send_photo(user_id, photo=canva_guide_photo, caption=buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                bot.send_message(user_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
             except Exception as e:
-                logger.error(f"PayOS: Error sending auto-delivery photo: {e}")
-                # Fallback without photo
-                try:
-                    bot.send_message(user_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                except Exception as e2:
-                    logger.error(f"PayOS: Error sending auto-delivery message: {e2}")
-                    bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
+                logger.error(f"PayOS: Error sending auto-delivery message: {e}")
+                bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
             
-            # Update reply keyboard
-            nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            nav_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
-            nav_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
-            update_reply_keyboard(user_id, nav_keyboard)
+            # Send Canva guide photo separately with reply keyboard
+            canva_guide_photo = "AgACAgUAAxkBAAI6TGmfKrHzbmZvjWhQN7pWcxe8fhozAAIwDWsb-0IAAVWVJ0OvdBs9pgEAAwIAA3kAAzoE"
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            # Add OTP buttons to reply keyboard for each account
+            for acc in assigned_accounts:
+                kb.row(types.KeyboardButton(text=f"🔑 Lấy OTP: {acc['email'][:30]}"))
+            kb.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+            kb.row(types.KeyboardButton(text="🏠 Trang chủ"))
+            try:
+                bot.send_photo(user_id, photo=canva_guide_photo, reply_markup=kb)
+            except Exception as e:
+                logger.error(f"PayOS: Error sending guide photo: {e}")
+                # Fallback: just update keyboard without photo
+                bot.send_message(user_id, "📸 Hướng dẫn sử dụng Canva Edu", reply_markup=kb)
             
             # Notify admin about auto-delivery
             # Build account list for admin
@@ -1027,6 +1028,8 @@ def callback_query(call):
         user_id = call.from_user.id
         lang = get_user_lang(user_id)
         
+        logger.info(f"Callback received: {call.data} from user {user_id}")
+        
         # Check maintenance mode - only allow admins
         if maintenance_mode and not is_admin(user_id):
             bot.answer_callback_query(call.id, "🔧 Bot đang bảo trì, vui lòng quay lại sau!")
@@ -1044,10 +1047,12 @@ def callback_query(call):
                 return
             
             ordernumber = int(call.data.replace("confirm_payment_final_", ""))
+            logger.info(f"Admin {user_id} confirming payment final for order {ordernumber}")
             bot.answer_callback_query(call.id, "Đang xử lý giao hàng...")
             
             # Get order info from pending_orders_info
             if ordernumber not in pending_orders_info:
+                logger.warning(f"Order {ordernumber} not found in pending_orders_info")
                 bot.answer_callback_query(call.id, "❌ Không tìm thấy đơn hàng!", show_alert=True)
                 return
             
@@ -1083,7 +1088,7 @@ def callback_query(call):
                 for account in available_accounts[:quantity]:
                     account_id = account[0]
                     email = account[1]
-                    authkey = account[2]
+                    authkey = account[2] if account[2] else "dlndaicanvaedu"
                     CanvaAccountDB.assign_account_to_buyer(account_id, buyer_id, ordernumber)
                     assigned_accounts.append({"email": email, "authkey": authkey})
                 
@@ -1092,9 +1097,8 @@ def callback_query(call):
                 otp_buttons = []
                 for i, acc in enumerate(assigned_accounts, 1):
                     accounts_text += f"\n🔑 *Tài khoản Canva:*\n"
-                    accounts_text += f"{acc['email']}\n"
-                    if acc.get('authkey'):
-                        accounts_text += f"🔐 Mật khẩu: `{acc['authkey']}`\n"
+                    accounts_text += f"`{acc['email']}`\n"
+                    accounts_text += f"🔐 *Mật khẩu:* `{acc['authkey']}`\n"
                     otp_buttons.append(types.InlineKeyboardButton(
                         text=f"🔑 Lấy OTP: {acc['email'][:20]}...",
                         callback_data=f"otp_{acc['email']}"
@@ -1116,15 +1120,25 @@ def callback_query(call):
                 for btn in otp_buttons:
                     inline_kb.add(btn)
                 
-                canva_guide_photo = "AgACAgUAAxkBAAI6TGmfKrHzbmZvjWhQN7pWcxe8fhozAAIwDWsb-0IAAVWVJ0OvdBs9pgEAAwIAA3kAAzoE"
-                
+                # Send text message with inline buttons first
                 try:
-                    bot.send_photo(buyer_id, photo=canva_guide_photo, caption=buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                    bot.send_message(buyer_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
                 except:
-                    try:
-                        bot.send_message(buyer_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
-                    except:
-                        bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
+                    bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
+                
+                # Send Canva guide photo separately with reply keyboard
+                canva_guide_photo = "AgACAgUAAxkBAAI6TGmfKrHzbmZvjWhQN7pWcxe8fhozAAIwDWsb-0IAAVWVJ0OvdBs9pgEAAwIAA3kAAzoE"
+                kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                # Add OTP buttons to reply keyboard for each account
+                for acc in assigned_accounts:
+                    kb.row(types.KeyboardButton(text=f"🔑 Lấy OTP: {acc['email'][:30]}"))
+                kb.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
+                kb.row(types.KeyboardButton(text="🏠 Trang chủ"))
+                try:
+                    bot.send_photo(buyer_id, photo=canva_guide_photo, reply_markup=kb)
+                except:
+                    # Fallback: just update keyboard without photo
+                    bot.send_message(buyer_id, "📸 Hướng dẫn sử dụng Canva Edu", reply_markup=kb)
                 
                 # Update admin message
                 accounts_list = ""
@@ -1951,9 +1965,18 @@ def callback_query(call):
             return
         else:
             logger.warning(f"Unknown callback data: {call.data}")
+            bot.answer_callback_query(call.id, "❌ Lỗi 404 - Vui lòng thử lại với dữ liệu đúng", show_alert=True)
     except Exception as e:
         logger.error(f"Error handling callback query: {e}")
-        bot.send_message(call.message.chat.id, get_text("error_404", get_user_lang(call.from_user.id)), parse_mode='Markdown')
+        try:
+            bot.answer_callback_query(call.id, "❌ Có lỗi xảy ra, vui lòng thử lại!")
+        except:
+            pass
+        try:
+            bot.send_message(call.message.chat.id, get_text("error_404", get_user_lang(call.from_user.id)), parse_mode='Markdown')
+        except:
+            pass
+        return
 
 
 #Function to list Products
