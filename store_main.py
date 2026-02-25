@@ -818,37 +818,51 @@ def payos_webhook():
             
             # Build account details message
             accounts_text = ""
+            otp_buttons = []
             for i, acc in enumerate(assigned_accounts, 1):
-                accounts_text += f"\n*Tài khoản {i}:*\n"
-                accounts_text += f"📧 Email: `{acc['email']}`\n"
+                accounts_text += f"\n🔑 *Tài khoản Canva:*\n"
+                accounts_text += f"{acc['email']}\n"
                 if acc.get('authkey'):
-                    accounts_text += f"🔑 Authkey: `{acc['authkey']}`\n"
+                    accounts_text += f"🔐 Mật khẩu: `{acc['authkey']}`\n"
+                
+                # Add OTP button for each account
+                otp_buttons.append(types.InlineKeyboardButton(
+                    text=f"🔑 Lấy OTP: {acc['email'][:20]}...",
+                    callback_data=f"otp_{acc['email']}"
+                ))
             
             # Send success message with accounts
             buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
             buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
             buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
             buyer_msg += f"📅 Ngày mua: _{orderdate}_\n"
-            buyer_msg += f"📦 Sản phẩm: *{product_name}*\n"
+            buyer_msg += f"📦 Gói: *{product_name}*\n"
             buyer_msg += f"🛡 Loại: *{warranty_label}*\n"
             buyer_msg += f"💰 Giá: *{price_num:,} {store_currency}*\n"
-            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-            buyer_msg += f"🎁 *TÀI KHOẢN CỦA BẠN:*"
+            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━"
             buyer_msg += accounts_text
             buyer_msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
-            buyer_msg += f"📖 *HƯỚNG DẪN SỬ DỤNG:*\n"
-            buyer_msg += f"1. Truy cập: https://www.canva.com\n"
-            buyer_msg += f"2. Đăng nhập bằng email trên\n"
-            buyer_msg += f"3. Sử dụng Authkey khi cần\n"
-            buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-            buyer_msg += f"💬 Hỗ trợ: @dlndai"
+            buyer_msg += f"👇 _Bấm nút bên dưới để lấy mã xác thực cho email (dùng cho việc đăng nhập, đổi mail, v.v...)_"
             buyer_msg += promo_msg
             
+            # Create inline keyboard with OTP buttons
+            inline_kb = types.InlineKeyboardMarkup(row_width=1)
+            for btn in otp_buttons:
+                inline_kb.add(btn)
+            
+            # Send with photo (Canva Edu guide)
+            canva_guide_photo = "AgACAgUAAxkBAAI6TGmfKrHzbmZvjWhQN7pWcxe8fhozAAIwDWsb-0IAAVWVJ0OvdBs9pgEAAwIAA3kAAzoE"
+            
             try:
-                bot.send_message(user_id, buyer_msg, parse_mode="Markdown")
+                bot.send_photo(user_id, photo=canva_guide_photo, caption=buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
             except Exception as e:
-                logger.error(f"PayOS: Error sending auto-delivery message: {e}")
-                bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
+                logger.error(f"PayOS: Error sending auto-delivery photo: {e}")
+                # Fallback without photo
+                try:
+                    bot.send_message(user_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
+                except Exception as e2:
+                    logger.error(f"PayOS: Error sending auto-delivery message: {e2}")
+                    bot.send_message(user_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
             
             # Update reply keyboard
             nav_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
