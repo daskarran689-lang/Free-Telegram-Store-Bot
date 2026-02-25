@@ -821,7 +821,8 @@ def payos_webhook():
             for i, acc in enumerate(assigned_accounts, 1):
                 accounts_text += f"\n*Tài khoản {i}:*\n"
                 accounts_text += f"📧 Email: `{acc['email']}`\n"
-                accounts_text += f"🔑 Authkey: `{acc['authkey']}`\n"
+                if acc.get('authkey'):
+                    accounts_text += f"🔑 Authkey: `{acc['authkey']}`\n"
             
             # Send success message with accounts
             buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
@@ -4884,7 +4885,7 @@ def create_payos_payment_link(ordernumber, amount, description, buyer_name, canc
         }
         
         logger.info(f"PayOS request: {data}")
-        response = requests.post(api_url, json=data, headers=headers, timeout=10)
+        response = requests.post(api_url, json=data, headers=headers, timeout=30)
         result = response.json()
         logger.info(f"PayOS response: {result}")
         
