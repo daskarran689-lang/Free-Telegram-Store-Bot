@@ -871,6 +871,11 @@ def payos_webhook():
             update_reply_keyboard(user_id, nav_keyboard)
             
             # Notify admin about auto-delivery
+            # Build account list for admin
+            accounts_list = ""
+            for i, acc in enumerate(assigned_accounts, 1):
+                accounts_list += f"\n📧 {acc['email']}"
+            
             admin_msg = f"✅ *Đơn CANVA EDU ADMIN đã giao tự động!*\n"
             admin_msg += f"━━━━━━━━━━━━━━\n"
             admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
@@ -880,7 +885,8 @@ def payos_webhook():
             admin_msg += f"📦 Số lượng: {quantity}\n"
             admin_msg += f"💰 Số tiền: {amount:,} VND\n"
             admin_msg += f"━━━━━━━━━━━━━━\n"
-            admin_msg += f"🤖 *Đã giao tự động từ kho*"
+            admin_msg += f"🤖 *Đã giao tự động từ kho:*"
+            admin_msg += accounts_list
             
             if ordernumber in pending_admin_messages:
                 for msg_info in pending_admin_messages[ordernumber]:
@@ -1149,6 +1155,11 @@ def callback_query(call):
                         bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
                 
                 # Update admin message
+                # Build account list for admin
+                accounts_list = ""
+                for i, acc in enumerate(assigned_accounts, 1):
+                    accounts_list += f"\n📧 {acc['email']}"
+                
                 admin_msg = f"✅ *Đơn đã giao tự động!*\n"
                 admin_msg += f"━━━━━━━━━━━━━━\n"
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
@@ -1156,7 +1167,8 @@ def callback_query(call):
                 admin_msg += f"📦 Sản phẩm: {product_name}\n"
                 admin_msg += f"💰 Số tiền: {price_num:,} VND\n"
                 admin_msg += f"━━━━━━━━━━━━━━\n"
-                admin_msg += f"🤖 *Đã giao tự động từ kho*"
+                admin_msg += f"🤖 *Đã giao tự động từ kho:*"
+                admin_msg += accounts_list
                 
                 bot.edit_message_text(admin_msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
                 
