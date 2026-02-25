@@ -1062,10 +1062,8 @@ def callback_query(call):
             confirm_msg += f"Bạn có chắc đã nhận được tiền và muốn giao hàng cho đơn này không?"
             
             confirm_kb = types.InlineKeyboardMarkup()
-            confirm_kb.row(
-                types.InlineKeyboardButton(text="✅ Chắc chắn - Giao hàng", callback_data=f"confirm_payment_final_{ordernumber}"),
-                types.InlineKeyboardButton(text="❌ Hủy", callback_data=f"cancel_confirm_{ordernumber}")
-            )
+            confirm_kb.add(types.InlineKeyboardButton(text="✅ Chắc chắn - Giao hàng", callback_data=f"confirm_payment_final_{ordernumber}"))
+            confirm_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data=f"cancel_confirm_{ordernumber}"))
             
             bot.edit_message_text(confirm_msg, call.message.chat.id, call.message.message_id, reply_markup=confirm_kb, parse_mode="Markdown")
             return
