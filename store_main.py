@@ -1037,9 +1037,8 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "⏳ Thao tác quá nhanh, vui lòng chờ...")
             return
         
-        # Handle admin confirm payment (VietQR manual confirmation)
+        # Handle admin confirm payment - FINAL confirmation (step 2)
         if call.data.startswith("confirm_payment_final_"):
-            # Handle final confirmation (step 2)
             if not is_admin(user_id):
                 bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
                 return
@@ -1047,34 +1046,7 @@ def callback_query(call):
             ordernumber = int(call.data.replace("confirm_payment_final_", ""))
             bot.answer_callback_query(call.id, "Đang xử lý giao hàng...")
             
-            # Continue with delivery logic...
-            # (Keep existing code from line ~1070 onwards)
-            
-        elif call.data.startswith("confirm_payment_"):
-            # Handle first confirmation (step 1)
-            if not is_admin(user_id):
-                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
-                return
-            
-            ordernumber = int(call.data.replace("confirm_payment_", ""))
-            
-            # Show confirmation button (2-step confirmation to avoid mistakes)
-            bot.answer_callback_query(call.id, "⚠️ Vui lòng xác nhận lại!")
-            
-            confirm_msg = f"⚠️ *XÁC NHẬN GIAO HÀNG*\n\n"
-            confirm_msg += f"━━━━━━━━━━━━━━\n"
-            confirm_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
-            confirm_msg += f"━━━━━━━━━━━━━━\n\n"
-            confirm_msg += f"Bạn có chắc đã nhận được tiền và muốn giao hàng cho đơn này không?"
-            
-            confirm_kb = types.InlineKeyboardMarkup()
-            confirm_kb.add(types.InlineKeyboardButton(text="✅ Chắc chắn - Giao hàng", callback_data=f"confirm_payment_final_{ordernumber}"))
-            confirm_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data=f"cancel_confirm_{ordernumber}"))
-            
-            bot.edit_message_text(confirm_msg, call.message.chat.id, call.message.message_id, reply_markup=confirm_kb, parse_mode="Markdown")
-            return
-        
-        # Handle cancel confirmation
+            # Get order info from pending_orders_info
             if ordernumber not in pending_orders_info:
                 bot.answer_callback_query(call.id, "❌ Không tìm thấy đơn hàng!", show_alert=True)
                 return
@@ -1155,7 +1127,6 @@ def callback_query(call):
                         bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""), reply_markup=inline_kb)
                 
                 # Update admin message
-                # Build account list for admin
                 accounts_list = ""
                 for i, acc in enumerate(assigned_accounts, 1):
                     accounts_list += f"\n📧 {acc['email']}"
@@ -1173,7 +1144,7 @@ def callback_query(call):
                 bot.edit_message_text(admin_msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
                 
             else:
-                # MANUAL DELIVERY - notify admin
+                # MANUAL DELIVERY
                 buyer_msg = f"✅ *THANH TOÁN THÀNH CÔNG!*\n"
                 buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
                 buyer_msg += f"🆔 Mã đơn hàng: `{ordernumber}`\n"
@@ -1190,7 +1161,6 @@ def callback_query(call):
                 except:
                     bot.send_message(buyer_id, buyer_msg.replace("*", "").replace("_", "").replace("`", ""))
                 
-                # Update admin message
                 admin_msg = f"✅ *Đã xác nhận thanh toán!*\n"
                 admin_msg += f"━━━━━━━━━━━━━━\n"
                 admin_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
@@ -1223,6 +1193,28 @@ def callback_query(call):
             if ordernumber in pending_order_quantities:
                 del pending_order_quantities[ordernumber]
             
+            return
+        
+        # Handle admin confirm payment - FIRST confirmation (step 1)
+        if call.data.startswith("confirm_payment_"):
+            if not is_admin(user_id):
+                bot.answer_callback_query(call.id, "❌ Chỉ admin mới có quyền!", show_alert=True)
+                return
+            
+            ordernumber = int(call.data.replace("confirm_payment_", ""))
+            bot.answer_callback_query(call.id, "⚠️ Vui lòng xác nhận lại!")
+            
+            confirm_msg = f"⚠️ *XÁC NHẬN GIAO HÀNG*\n\n"
+            confirm_msg += f"━━━━━━━━━━━━━━\n"
+            confirm_msg += f"🆔 Mã đơn: `{ordernumber}`\n"
+            confirm_msg += f"━━━━━━━━━━━━━━\n\n"
+            confirm_msg += f"Bạn có chắc đã nhận được tiền và muốn giao hàng cho đơn này không?"
+            
+            confirm_kb = types.InlineKeyboardMarkup()
+            confirm_kb.add(types.InlineKeyboardButton(text="✅ Chắc chắn - Giao hàng", callback_data=f"confirm_payment_final_{ordernumber}"))
+            confirm_kb.add(types.InlineKeyboardButton(text="❌ Hủy", callback_data=f"cancel_confirm_{ordernumber}"))
+            
+            bot.edit_message_text(confirm_msg, call.message.chat.id, call.message.message_id, reply_markup=confirm_kb, parse_mode="Markdown")
             return
         
         # Handle cancel confirmation
@@ -4558,44 +4550,83 @@ def handle_canva_delivery_input(message):
     admin_msg_chat_id = delivery_info["admin_msg_chat_id"]
     admin_msg_id = delivery_info["admin_msg_id"]
     
-    # ===== STEP 1: Admin enters account details =====
+    # ===== STEP 1: Admin enters account details (emails only) =====
     if current_step == "account":
         account_details = message.text.strip()
         delivery_info["account_details"] = account_details
         
-        # Extract email from account details to check domain
+        # Extract ALL emails from account details
         import re
-        email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', account_details)
-        email_found = email_match.group(0) if email_match else None
+        email_pattern = r'[\w.+-]+@[\w-]+\.[\w.-]+'
+        emails_found = re.findall(email_pattern, account_details)
         
-        # Check if email is from supported OTP domain
+        if not emails_found:
+            bot.send_message(admin_id, "❌ Không tìm thấy email nào! Vui lòng nhập lại.", reply_markup=types.ReplyKeyboardRemove())
+            return
+        
+        # Check which emails support auto OTP
         from tempmail_client import EmailWorkerClient
-        email_supported = False
-        if email_found:
-            email_supported = EmailWorkerClient.is_worker_email(email_found)
-            # Also check TempMail.fish (any email can be checked via tempmail)
-            # For now, only EmailWorker domains are auto-supported
+        supported_emails = []
+        unsupported_emails = []
         
-        if email_supported:
-            # Email supports auto OTP -> deliver immediately with OTP button
-            delivery_info["otp_link"] = None  # Auto OTP
-            delivery_info["otp_email"] = email_found
-            _complete_canva_delivery(admin_id, delivery_info)
+        for email in emails_found:
+            if EmailWorkerClient.is_worker_email(email):
+                supported_emails.append(email)
+            else:
+                unsupported_emails.append(email)
+        
+        delivery_info["supported_emails"] = supported_emails
+        delivery_info["unsupported_emails"] = unsupported_emails
+        delivery_info["emails_found"] = emails_found
+        
+        # Move to password step
+        delivery_info["step"] = "password"
+        pending_canva_delivery[admin_id] = delivery_info
+        
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard.row(types.KeyboardButton(text="🔑 Mật khẩu mặc định"))
+        keyboard.row(types.KeyboardButton(text="⏩ Không có mật khẩu"))
+        keyboard.row(types.KeyboardButton(text="❌ Hủy giao hàng"))
+        
+        prompt_msg = f"🔐 *NHẬP MẬT KHẨU*\n"
+        prompt_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+        prompt_msg += f"Đã tìm thấy {len(emails_found)} email:\n"
+        for email in emails_found:
+            prompt_msg += f"• `{email}`\n"
+        prompt_msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        prompt_msg += f"Chọn hoặc nhập mật khẩu:\n\n"
+        prompt_msg += f"🔑 *Mật khẩu mặc định:* `dlndaicanvaedu`\n"
+        prompt_msg += f"⏩ *Không có mật khẩu*\n"
+        prompt_msg += f"✍️ *Hoặc nhập mật khẩu tùy chỉnh*"
+        
+        bot.send_message(admin_id, prompt_msg, reply_markup=keyboard, parse_mode="Markdown")
+        return
+    
+    # ===== STEP 2: Admin enters password =====
+    if current_step == "password":
+        if message.text == "🔑 Mật khẩu mặc định":
+            delivery_info["password"] = "dlndaicanvaedu"
+        elif message.text == "⏩ Không có mật khẩu":
+            delivery_info["password"] = None
         else:
-            # Email NOT supported for auto OTP -> ask admin for OTP website
+            delivery_info["password"] = message.text.strip()
+        
+        # Check if has unsupported emails -> ask for OTP link
+        unsupported_emails = delivery_info.get("unsupported_emails", [])
+        
+        if unsupported_emails:
+            # Has unsupported emails -> ask admin for OTP website
             delivery_info["step"] = "otp_link"
-            delivery_info["otp_email"] = email_found
             pending_canva_delivery[admin_id] = delivery_info
             
             keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
             keyboard.row(types.KeyboardButton(text="⏩ Bỏ qua"))
             keyboard.row(types.KeyboardButton(text="❌ Hủy giao hàng"))
             
-            warn_msg = ""
-            if email_found:
-                warn_msg = f"⚠️ Email `{email_found}` không thuộc domain hỗ trợ lấy OTP tự động.\n\n"
-            else:
-                warn_msg = "⚠️ Không tìm thấy email trong thông tin tài khoản.\n\n"
+            warn_msg = f"⚠️ Các email sau không hỗ trợ lấy OTP tự động:\n"
+            for email in unsupported_emails:
+                warn_msg += f"• `{email}`\n"
+            warn_msg += "\n"
             
             prompt_msg = f"🔗 *NHẬP LINK LẤY MÃ XÁC THỰC*\n"
             prompt_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -4607,9 +4638,13 @@ def handle_canva_delivery_input(message):
             prompt_msg += f"Hoặc bấm ⏩ Bỏ qua nếu không cần."
             
             bot.send_message(admin_id, prompt_msg, reply_markup=keyboard, parse_mode="Markdown")
+        else:
+            # All emails support auto OTP -> deliver immediately
+            delivery_info["otp_link"] = None
+            _complete_canva_delivery(admin_id, delivery_info)
         return
     
-    # ===== STEP 2: Admin enters OTP link =====
+    # ===== STEP 3: Admin enters OTP link =====
     if current_step == "otp_link":
         if message.text.strip() == "⏩ Bỏ qua":
             delivery_info["otp_link"] = None
@@ -4628,13 +4663,37 @@ def _complete_canva_delivery(admin_id, delivery_info):
     admin_msg_chat_id = delivery_info["admin_msg_chat_id"]
     admin_msg_id = delivery_info["admin_msg_id"]
     account_details = delivery_info["account_details"]
+    password = delivery_info.get("password")
     otp_link = delivery_info.get("otp_link")
-    otp_email = delivery_info.get("otp_email")
+    emails_found = delivery_info.get("emails_found", [])
     warranty_type = delivery_info.get("warranty_type", "kbh")
     
-    # Build buyer message
+    # Build buyer message with emails and password
     buyer_msg = f"🎉 *THÔNG BÁO TỪ ADMIN*\n"
     buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    buyer_msg += f"✅ Đơn hàng `{ordernumber}` đã được xử lý xong!\n\n"
+    buyer_msg += f"📦 *THÔNG TIN TÀI KHOẢN:*\n"
+    buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Display each email with password
+    for i, email in enumerate(emails_found, 1):
+        buyer_msg += f"\n🔑 *Tài khoản {i if len(emails_found) > 1 else ''}:*\n"
+        buyer_msg += f"{email}\n"
+        if password:
+            buyer_msg += f"🔐 Mật khẩu: `{password}`\n"
+    
+    buyer_msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Add OTP instructions based on email type
+    from tempmail_client import EmailWorkerClient
+    supported_emails = delivery_info.get("supported_emails", [])
+    
+    if supported_emails:
+        buyer_msg += f"🔑 Lấy mã xác thực: Bấm nút *🔑 Lấy OTP* bên dưới\n"
+    if otp_link:
+        buyer_msg += f"🔑 Lấy mã xác thực tại: {otp_link}\n"
+    
+    buyer_msg += f"Cảm ơn bạn đã sử dụng dịch vụ! 💚"
     buyer_msg += f"✅ Đơn hàng `{ordernumber}` đã được xử lý xong!\n\n"
     buyer_msg += f"📦 *THÔNG TIN TÀI KHOẢN:*\n"
     buyer_msg += f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -4657,18 +4716,27 @@ def _complete_canva_delivery(admin_id, delivery_info):
     buyer_msg += f"Cảm ơn bạn đã sử dụng dịch vụ! 💚"
     
     try:
-        # Send with inline OTP button if applicable
-        inline_kb = types.InlineKeyboardMarkup()
-        if otp_email and EmailWorkerClient.is_worker_email(otp_email):
-            btn_text = f"🔑 Lấy OTP: {otp_email[:25]}..." if len(otp_email) > 25 else f"🔑 Lấy OTP: {otp_email}"
-            inline_kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"otp_{otp_email}"))
+        # Get supported and unsupported emails
+        supported_emails = delivery_info.get("supported_emails", [])
+        unsupported_emails = delivery_info.get("unsupported_emails", [])
+        
+        # Send with inline OTP buttons for supported emails
+        inline_kb = types.InlineKeyboardMarkup(row_width=1)
+        has_otp_buttons = False
+        
+        for email in supported_emails:
+            btn_text = f"🔑 Lấy OTP: {email[:20]}..." if len(email) > 20 else f"🔑 Lấy OTP: {email}"
+            inline_kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"otp_{email}"))
+            has_otp_buttons = True
+        
+        if has_otp_buttons:
             bot.send_message(buyer_user_id, buyer_msg, reply_markup=inline_kb, parse_mode="Markdown")
         else:
             bot.send_message(buyer_user_id, buyer_msg, parse_mode="Markdown")
         
         # Send reply keyboard to buyer
         otp_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        if otp_email and EmailWorkerClient.is_worker_email(otp_email):
+        if has_otp_buttons:
             otp_keyboard.row(types.KeyboardButton(text="🔑 Lấy mã xác thực"))
         otp_keyboard.row(types.KeyboardButton(text="🛍 Đơn hàng"), types.KeyboardButton(text="📞 Hỗ trợ"))
         otp_keyboard.row(types.KeyboardButton(text="🏠 Trang chủ"))
