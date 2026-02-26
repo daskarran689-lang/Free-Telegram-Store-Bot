@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # Global cache for JWT token
-_jwt_cache_file = "tempmail_jwt_cache.json"
+_jwt_cache_file = "tempmail_jwt_cache.json"1
 
 
 class TempMailClient:

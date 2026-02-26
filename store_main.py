@@ -822,7 +822,9 @@ def payos_webhook():
             for i, acc in enumerate(assigned_accounts, 1):
                 accounts_text += f"\n🔑 *Tài khoản Canva:*\n"
                 accounts_text += f"`{acc['email']}`\n"
-                accounts_text += f"🔐 *Mật khẩu:* `{acc['authkey']}`\n"
+                # Use default password if authkey is None or empty
+                password = acc.get('authkey') if acc.get('authkey') else 'dlndaicanvaedu'
+                accounts_text += f"🔐 *Mật khẩu:* `{password}`\n"
                 
                 # Add OTP button for each account
                 otp_buttons.append(types.InlineKeyboardButton(
@@ -1098,7 +1100,9 @@ def callback_query(call):
                 for i, acc in enumerate(assigned_accounts, 1):
                     accounts_text += f"\n🔑 *Tài khoản Canva:*\n"
                     accounts_text += f"`{acc['email']}`\n"
-                    accounts_text += f"🔐 *Mật khẩu:* `{acc['authkey']}`\n"
+                    # Use default password if authkey is None or empty
+                    password = acc.get('authkey') if acc.get('authkey') else 'dlndaicanvaedu'
+                    accounts_text += f"🔐 *Mật khẩu:* `{password}`\n"
                     otp_buttons.append(types.InlineKeyboardButton(
                         text=f"🔑 Lấy OTP: {acc['email'][:20]}...",
                         callback_data=f"otp_{acc['email']}"
